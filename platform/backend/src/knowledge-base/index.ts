@@ -1,6 +1,8 @@
 export { extractAndIngestDocuments } from "./chat-document-extractor";
 export { connectorSyncService } from "./connector-sync";
 export { embeddingService } from "./embedder";
+export { permissionSyncService } from "./permission-sync";
+export { enqueuePermissionSyncForIngestedContent } from "./permission-sync-trigger";
 
 export { queryService } from "./query";
 export {

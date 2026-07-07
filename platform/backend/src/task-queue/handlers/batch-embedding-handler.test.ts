@@ -3,8 +3,12 @@ import { vi } from "vitest";
 const mockProcessDocuments = vi.hoisted(() =>
   vi.fn().mockResolvedValue(undefined),
 );
+const mockEnqueuePermissionSync = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
 vi.mock("@/knowledge-base", () => ({
   embeddingService: { processDocuments: mockProcessDocuments },
+  enqueuePermissionSyncForIngestedContent: mockEnqueuePermissionSync,
 }));
 
 import { ConnectorRunModel, KnowledgeBaseConnectorModel } from "@/models";
