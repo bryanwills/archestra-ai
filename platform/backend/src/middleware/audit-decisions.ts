@@ -483,6 +483,11 @@ export const AUDIT_DECISIONS = {
     audited: false,
     reason: "child of knowledge base; parent audited",
   },
+  kbExternalUserGroupTable: {
+    audited: false,
+    reason:
+      "permission-sync group-membership snapshot; derived upstream data, not config",
+  },
   llmProviderApiKeyModelsTable: {
     audited: false,
     reason: "join: provider key × model; parent audited",

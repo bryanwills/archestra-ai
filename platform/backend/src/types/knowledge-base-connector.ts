@@ -9,6 +9,7 @@ import { KnowledgeSourceVisibilitySchema } from "./knowledge-base";
 import {
   ConnectorCheckpointSchema,
   ConnectorConfigSchema,
+  ConnectorRunTypeSchema,
   ConnectorSyncStatusSchema,
   ConnectorTypeSchema,
 } from "./knowledge-connector";
@@ -45,6 +46,7 @@ export const SelectKnowledgeBaseConnectorSchema = createSelectSchema(
     connectorType: ConnectorTypeSchema,
     config: ConnectorConfigSchema,
     lastSyncStatus: NullableConnectorSyncStatusSchema,
+    lastPermissionSyncStatus: NullableConnectorSyncStatusSchema,
   },
 );
 export const InsertKnowledgeBaseConnectorSchema = createInsertSchema(
@@ -56,6 +58,7 @@ export const InsertKnowledgeBaseConnectorSchema = createInsertSchema(
     config: ConnectorConfigSchema,
     checkpoint: ConnectorCheckpointSchema.optional(),
     lastSyncStatus: NullableConnectorSyncStatusSchema.optional(),
+    lastPermissionSyncStatus: NullableConnectorSyncStatusSchema.optional(),
   },
 ).omit({ id: true, createdAt: true, updatedAt: true });
 export const UpdateKnowledgeBaseConnectorSchema = createUpdateSchema(
@@ -67,6 +70,7 @@ export const UpdateKnowledgeBaseConnectorSchema = createUpdateSchema(
     config: ConnectorConfigSchema.optional(),
     checkpoint: ConnectorCheckpointSchema.nullable().optional(),
     lastSyncStatus: NullableConnectorSyncStatusSchema.optional(),
+    lastPermissionSyncStatus: NullableConnectorSyncStatusSchema.optional(),
   },
 ).pick({
   name: true,
@@ -81,6 +85,9 @@ export const UpdateKnowledgeBaseConnectorSchema = createUpdateSchema(
   lastSyncAt: true,
   lastSyncStatus: true,
   lastSyncError: true,
+  lastPermissionSyncAt: true,
+  lastPermissionSyncStatus: true,
+  aclConfigEpoch: true,
   checkpoint: true,
 });
 
@@ -98,7 +105,7 @@ export type UpdateKnowledgeBaseConnector = z.infer<
 
 export const SelectConnectorRunSchema = createSelectSchema(
   schema.connectorRunsTable,
-  { status: ConnectorSyncStatusSchema },
+  { status: ConnectorSyncStatusSchema, runType: ConnectorRunTypeSchema },
 );
 // Internal liveness-lease columns — never exposed in API responses.
 const CONNECTOR_RUN_LEASE_FIELDS = {
@@ -118,7 +125,10 @@ export const SelectConnectorRunListSchema = SelectConnectorRunSchema.omit({
 });
 export const InsertConnectorRunSchema = createInsertSchema(
   schema.connectorRunsTable,
-  { status: ConnectorSyncStatusSchema },
+  {
+    status: ConnectorSyncStatusSchema,
+    runType: ConnectorRunTypeSchema.optional(),
+  },
 ).omit({ id: true, createdAt: true });
 export const UpdateConnectorRunSchema = createUpdateSchema(
   schema.connectorRunsTable,

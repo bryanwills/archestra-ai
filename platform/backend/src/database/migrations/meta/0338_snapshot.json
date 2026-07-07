@@ -1,5 +1,5 @@
 {
-  "id": "eaa95fad-d3aa-423b-977d-dd7ada6a9621",
+  "id": "e5d20e81-a0d1-458b-bd29-aadd07295a96",
   "prevId": "784cba44-c875-4d11-9317-2194aaf42eb2",
   "version": "7",
   "dialect": "postgresql",
@@ -4099,6 +4099,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "run_type": {
+          "name": "run_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'content'"
+        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp",
@@ -4226,11 +4233,17 @@
           "method": "btree",
           "with": {}
         },
-        "connector_runs_one_running_per_connector_idx": {
-          "name": "connector_runs_one_running_per_connector_idx",
+        "connector_runs_one_running_per_connector_run_type_idx": {
+          "name": "connector_runs_one_running_per_connector_run_type_idx",
           "columns": [
             {
               "expression": "connector_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_type",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -5029,23 +5042,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "conversations_project_id_idx": {
-          "name": "conversations_project_id_idx",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "conversations_agent_id_agents_id_fk": {
           "name": "conversations_agent_id_agents_id_fk",
@@ -7487,6 +7484,12 @@
           "notNull": true,
           "default": "'[]'::jsonb"
         },
+        "acl_sync_generation": {
+          "name": "acl_sync_generation",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "metadata": {
           "name": "metadata",
           "type": "jsonb",
@@ -7565,6 +7568,149 @@
         "kb_documents_connector_id_knowledge_base_connectors_id_fk": {
           "name": "kb_documents_connector_id_knowledge_base_connectors_id_fk",
           "tableFrom": "kb_documents",
+          "tableTo": "knowledge_base_connectors",
+          "columnsFrom": [
+            "connector_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.kb_external_user_group": {
+      "name": "kb_external_user_group",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connector_id": {
+          "name": "connector_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connector_type": {
+          "name": "connector_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "member_email": {
+          "name": "member_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stale": {
+          "name": "stale",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "kb_external_user_group_unique_idx": {
+          "name": "kb_external_user_group_unique_idx",
+          "columns": [
+            {
+              "expression": "connector_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "member_email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "kb_external_user_group_member_email_idx": {
+          "name": "kb_external_user_group_member_email_idx",
+          "columns": [
+            {
+              "expression": "member_email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "kb_external_user_group_connector_id_idx": {
+          "name": "kb_external_user_group_connector_id_idx",
+          "columns": [
+            {
+              "expression": "connector_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "kb_external_user_group_connector_id_knowledge_base_connectors_id_fk": {
+          "name": "kb_external_user_group_connector_id_knowledge_base_connectors_id_fk",
+          "tableFrom": "kb_external_user_group",
           "tableTo": "knowledge_base_connectors",
           "columnsFrom": [
             "connector_id"
@@ -7771,11 +7917,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_permission_sync_at": {
+          "name": "last_permission_sync_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_permission_sync_status": {
+          "name": "last_permission_sync_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "checkpoint": {
           "name": "checkpoint",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
+        },
+        "acl_config_epoch": {
+          "name": "acl_config_epoch",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -10954,6 +11119,12 @@
         },
         "reranker_model": {
           "name": "reranker_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "permission_sync_schedule": {
+          "name": "permission_sync_schedule",
           "type": "text",
           "primaryKey": false,
           "notNull": false

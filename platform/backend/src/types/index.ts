@@ -41,6 +41,7 @@ export * from "./interaction-guardrails";
 export * from "./invitation";
 export * from "./kb-chunk";
 export * from "./kb-document";
+export * from "./kb-external-user-group";
 export * from "./knowledge-base";
 export * from "./knowledge-base-connector";
 export * from "./knowledge-connector";

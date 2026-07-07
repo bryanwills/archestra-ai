@@ -421,6 +421,10 @@ export const UpdateKnowledgeSettingsSchema = z.object({
   embeddingChatApiKeyId: z.string().uuid().nullable().optional(),
   rerankerChatApiKeyId: z.string().uuid().nullable().optional(),
   rerankerModel: z.string().nullable().optional(),
+  // Global permission-sync cron for auto-sync-permissions connectors. `null`
+  // resets to the ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE env default. Validated
+  // as a cron expression in the route handler (croner).
+  permissionSyncSchedule: z.string().min(1).nullable().optional(),
 });
 
 export const UpdateAuthSettingsSchema = z.object({

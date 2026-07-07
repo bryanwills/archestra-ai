@@ -54,6 +54,17 @@ export const ConnectorSyncStatusSchema = z.enum([
 ]);
 export type ConnectorSyncStatus = z.infer<typeof ConnectorSyncStatusSchema>;
 
+// ===== Connector Run Type (runtime-isolated job families) =====
+
+/**
+ * Which job family a `connector_runs` row belongs to. `content` is the existing
+ * ingestion sync; `permission` is the runtime-isolated permission-sync pass.
+ * The two families single-flight independently (composite lease index) so a
+ * content run and a permission run for the same connector can run concurrently.
+ */
+export const ConnectorRunTypeSchema = z.enum(["content", "permission"]);
+export type ConnectorRunType = z.infer<typeof ConnectorRunTypeSchema>;
+
 // ===== Connector Credentials =====
 
 export const ConnectorCredentialsSchema = z.object({
@@ -550,6 +561,22 @@ export type ConnectorCheckpoint = z.infer<typeof ConnectorCheckpointSchema>;
 
 // ===== Sync Types =====
 
+/**
+ * The audience of a single document as extracted from the source system, used
+ * by the permission-sync pass to build the per-document ACL:
+ * - `users` — upstream principals resolved to emails (→ `user_email:` tokens)
+ * - `groups` — upstream group ids (→ namespaced `group:<source>_<id>` tokens)
+ * - `isPublic` — visible to everyone in the org (→ `org:*`)
+ *
+ * Empty permissions (no users, no groups, not public) ⇒ empty ACL ⇒ fail-closed
+ * (only admins, who bypass the ACL, can retrieve the document).
+ */
+export interface DocumentPermissions {
+  users?: string[];
+  groups?: string[];
+  isPublic?: boolean;
+}
+
 export interface ConnectorDocument {
   id: string;
   title: string;
@@ -558,11 +585,7 @@ export interface ConnectorDocument {
   metadata: Record<string, unknown>;
   updatedAt?: Date;
   /** Access control permissions extracted from the source system */
-  permissions?: {
-    users?: string[];
-    groups?: string[];
-    isPublic?: boolean;
-  };
+  permissions?: DocumentPermissions;
   /**
    * Optional inline media (image) data. When present, the pipeline will embed
    * this as a multimodal chunk in addition to the text content.
@@ -594,6 +617,67 @@ export interface ConnectorSyncBatch {
   skipped?: ConnectorItemSkipped[];
   checkpoint: ConnectorCheckpoint;
   hasMore: boolean;
+}
+
+// ===== Permission Sync Types =====
+
+/** A lean reference to one already-ingested document (content-sync output). */
+export interface IngestedDocumentRef {
+  sourceId: string;
+  metadata: Record<string, unknown> | null;
+}
+
+/**
+ * Keyset-paginated read-back of a connector's already-ingested documents,
+ * injected into the permission-sync hooks by the pass. Container-scoped
+ * connectors (GitHub: repo → its docs) use this to tag every document in a
+ * container with the container's once-resolved audience — a deliberate,
+ * documented read of content-sync output, O(page) memory. Per-item connectors
+ * (Jira/Confluence) that re-enumerate upstream can ignore it.
+ */
+export type ReadIngestedDocuments = (args: {
+  /** JSONB equality filter on `kb_documents.metadata` (e.g. `{ repo: "o/r" }`). */
+  metadataFilter?: Record<string, string>;
+  /** Keyset cursor: return only rows with id > afterId (ascending by id). */
+  afterId?: string | null;
+  limit: number;
+}) => Promise<{ documents: IngestedDocumentRef[]; nextAfterId: string | null }>;
+
+/** Shared input for the permission-sync extraction hooks (§1 of the plan). */
+export interface PermissionSyncParams {
+  config: Record<string, unknown>;
+  credentials: ConnectorCredentials;
+  /**
+   * Opaque resume cursor from a prior interrupted run of the same generation,
+   * or null on a fresh enumeration. Connectors treat it as their own
+   * stable-ordered position marker (e.g. last page id / issue key / repo).
+   */
+  cursor: string | null;
+  /** Read-back of already-ingested docs (see ReadIngestedDocuments). */
+  readIngestedDocuments: ReadIngestedDocuments;
+}
+
+/**
+ * One document's audience, yielded by `syncDocumentPermissions`. `sourceId`
+ * MUST byte-match content-sync's `kb_documents.sourceId` (= the document's
+ * upstream id) — the sourceId data-contract. `cursor`, when set at a natural
+ * upstream page boundary, is persisted by the pass for crash-safe resume.
+ */
+export interface DocumentPermissionsYield {
+  sourceId: string;
+  permissions: DocumentPermissions;
+  cursor?: string;
+}
+
+/**
+ * One upstream group expanded to its member emails, yielded by `syncGroups`.
+ * `groupId` MUST byte-match the id encoded in the document's
+ * `group:<source>_<groupId>` token — the groupId data-contract.
+ */
+export interface GroupMembershipYield {
+  groupId: string;
+  memberEmails: string[];
+  cursor?: string;
 }
 
 // ===== Internal helpers =====
@@ -675,4 +759,30 @@ export interface Connector {
      */
     embeddingInputModalities?: ModelInputModality[];
   }): AsyncGenerator<ConnectorSyncBatch>;
+
+  // ===== Permission sync (optional; default-off, see BaseConnector) =====
+
+  /**
+   * Whether this connector implements the permission-sync hooks below. Default
+   * `false`; overridden `true` by connectors that populate document audiences.
+   * Adding permission sync to a connector = set this flag + implement the two
+   * generators. Nothing else in the core changes.
+   */
+  supportsPermissionSync: boolean;
+
+  /**
+   * Yield the audience per document WITHOUT re-downloading content. Connectors
+   * resolve container-level audiences once (repo / space / project) and reuse
+   * them across all the container's documents.
+   */
+  syncDocumentPermissions?(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<DocumentPermissionsYield>;
+
+  /**
+   * Yield each upstream group expanded to its member emails (instance/org-wide).
+   */
+  syncGroups?(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<GroupMembershipYield>;
 }

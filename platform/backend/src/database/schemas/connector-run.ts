@@ -10,7 +10,10 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { ConnectorSyncStatus } from "@/types/knowledge-connector";
+import type {
+  ConnectorRunType,
+  ConnectorSyncStatus,
+} from "@/types/knowledge-connector";
 import knowledgeBaseConnectorsTable from "./knowledge-base-connector";
 
 const connectorRunsTable = pgTable(
@@ -23,6 +26,13 @@ const connectorRunsTable = pgTable(
         onDelete: "cascade",
       }),
     status: text("status").$type<ConnectorSyncStatus>().notNull(),
+    // Which runtime-isolated job family this run belongs to. `content` is the
+    // existing ingestion sync; `permission` is the permission-sync pass. The
+    // two single-flight independently (see the composite index below).
+    runType: text("run_type")
+      .$type<ConnectorRunType>()
+      .notNull()
+      .default("content"),
     startedAt: timestamp("started_at", { mode: "date" }).notNull(),
     completedAt: timestamp("completed_at", { mode: "date" }),
     documentsProcessed: integer("documents_processed").default(0),
@@ -48,10 +58,12 @@ const connectorRunsTable = pgTable(
   },
   (table) => [
     index("connector_runs_connector_id_idx").on(table.connectorId),
-    // Single-flight: at most one active (running) run per connector. A second
-    // concurrent sync's INSERT fails cleanly instead of racing to supersede.
-    uniqueIndex("connector_runs_one_running_per_connector_idx")
-      .on(table.connectorId)
+    // Single-flight per (connector, run type): at most one active (running) run
+    // of each family per connector. A content run and a permission run for the
+    // same connector can be `running` simultaneously; a second run of the same
+    // family INSERTs cleanly-failed instead of racing to supersede.
+    uniqueIndex("connector_runs_one_running_per_connector_run_type_idx")
+      .on(table.connectorId, table.runType)
       .where(sql`status = 'running'`),
     // Reaper scan: find running runs whose lease has expired.
     index("connector_runs_lease_expires_at_idx")

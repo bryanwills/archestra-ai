@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   jsonb,
@@ -49,7 +50,22 @@ const knowledgeBaseConnectorsTable = pgTable(
     lastSyncAt: timestamp("last_sync_at", { mode: "date" }),
     lastSyncStatus: text("last_sync_status").$type<ConnectorSyncStatus>(),
     lastSyncError: text("last_sync_error"),
+    // Permission-sync status, kept separate from the content-sync fields above
+    // so a permission run never clobbers `lastSyncAt` / `lastSyncStatus`.
+    lastPermissionSyncAt: timestamp("last_permission_sync_at", {
+      mode: "date",
+    }),
+    lastPermissionSyncStatus: text(
+      "last_permission_sync_status",
+    ).$type<ConnectorSyncStatus>(),
     checkpoint: jsonb("checkpoint").$type<ConnectorCheckpoint>(),
+    // Monotonic fencing token bumped atomically whenever `visibility` or
+    // `teamIds` change. Every ACL writer (content-sync ingest and the
+    // permission-sync pass) fences its write on the value it read alongside the
+    // visibility config, so a write computed against a now-stale config no-ops.
+    aclConfigEpoch: bigint("acl_config_epoch", { mode: "number" })
+      .notNull()
+      .default(0),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })
       .notNull()
