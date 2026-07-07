@@ -13,6 +13,11 @@ const mockGetRef = vi.fn();
 const mockGetTree = vi.fn();
 const mockGetContent = vi.fn();
 const mockReposGet = vi.fn();
+const mockListCollaborators = vi.fn();
+const mockReposListTeams = vi.fn();
+const mockTeamsList = vi.fn();
+const mockListMembersInOrg = vi.fn();
+const mockGetByUsername = vi.fn();
 const capturedOctokitOptions: Record<string, unknown>[] = [];
 
 vi.mock("@octokit/rest", () => ({
@@ -22,7 +27,10 @@ vi.mock("@octokit/rest", () => ({
     }
 
     rest = {
-      users: { getAuthenticated: mockGetAuthenticated },
+      users: {
+        getAuthenticated: mockGetAuthenticated,
+        getByUsername: mockGetByUsername,
+      },
       apps: {
         listReposAccessibleToInstallation:
           mockListReposAccessibleToInstallation,
@@ -31,10 +39,16 @@ vi.mock("@octokit/rest", () => ({
         listForOrg: mockListForOrg,
         getContent: mockGetContent,
         get: mockReposGet,
+        listCollaborators: mockListCollaborators,
+        listTeams: mockReposListTeams,
       },
       issues: {
         listForRepo: mockListForRepo,
         listComments: mockListComments,
+      },
+      teams: {
+        list: mockTeamsList,
+        listMembersInOrg: mockListMembersInOrg,
       },
       git: { getRef: mockGetRef, getTree: mockGetTree },
     };
@@ -1209,6 +1223,142 @@ describe("GithubConnector", () => {
         owner: "test-org",
       });
       expect(result).toEqual({ valid: true });
+    });
+  });
+
+  describe("permission sync", () => {
+    async function collect<T>(gen: AsyncGenerator<T>): Promise<T[]> {
+      const out: T[] = [];
+      for await (const item of gen) out.push(item);
+      return out;
+    }
+
+    test("supportsPermissionSync is true", () => {
+      expect(connector.supportsPermissionSync).toBe(true);
+    });
+
+    test("syncDocumentPermissions tags every repo doc with the repo audience", async () => {
+      mockReposGet.mockResolvedValue({
+        data: { default_branch: "main", private: true },
+      });
+      mockListCollaborators.mockResolvedValue({ data: [{ login: "alice" }] });
+      mockReposListTeams.mockResolvedValue({ data: [{ slug: "eng" }] });
+      mockGetByUsername.mockImplementation(
+        async ({ username }: { username: string }) => ({
+          data: { email: `${username}@example.com` },
+        }),
+      );
+
+      const readIngestedDocuments = vi.fn().mockResolvedValue({
+        documents: [
+          { sourceId: "my-repo#1", metadata: { repo: "test-org/my-repo" } },
+          {
+            sourceId: "my-repo#file:README.md",
+            metadata: { repo: "test-org/my-repo" },
+          },
+        ],
+        nextAfterId: null,
+      });
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.({
+          config: validConfig,
+          credentials,
+          cursor: null,
+          readIngestedDocuments,
+        }) ?? (async function* () {})(),
+      );
+
+      expect(readIngestedDocuments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadataFilter: { repo: "test-org/my-repo" },
+        }),
+      );
+      expect(yields).toEqual([
+        {
+          sourceId: "my-repo#1",
+          cursor: "test-org/my-repo",
+          permissions: {
+            isPublic: false,
+            users: ["alice@example.com"],
+            groups: ["test-org/eng"],
+          },
+        },
+        {
+          sourceId: "my-repo#file:README.md",
+          cursor: "test-org/my-repo",
+          permissions: {
+            isPublic: false,
+            users: ["alice@example.com"],
+            groups: ["test-org/eng"],
+          },
+        },
+      ]);
+    });
+
+    test("a public repo yields isPublic and skips collaborators without a public email", async () => {
+      mockReposGet.mockResolvedValue({
+        data: { default_branch: "main", private: false },
+      });
+      mockListCollaborators.mockResolvedValue({ data: [{ login: "carol" }] });
+      mockReposListTeams.mockResolvedValue({ data: [] });
+      mockGetByUsername.mockResolvedValue({ data: { email: null } });
+
+      const readIngestedDocuments = vi.fn().mockResolvedValue({
+        documents: [{ sourceId: "my-repo#1", metadata: {} }],
+        nextAfterId: null,
+      });
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.({
+          config: validConfig,
+          credentials,
+          cursor: null,
+          readIngestedDocuments,
+        }) ?? (async function* () {})(),
+      );
+
+      expect(yields).toEqual([
+        {
+          sourceId: "my-repo#1",
+          cursor: "test-org/my-repo",
+          permissions: { isPublic: true, users: [], groups: [] },
+        },
+      ]);
+    });
+
+    test("syncGroups expands org teams to member emails", async () => {
+      mockReposGet.mockResolvedValue({
+        data: { default_branch: "main" },
+      });
+      mockTeamsList.mockResolvedValue({ data: [{ slug: "eng" }] });
+      mockListMembersInOrg.mockResolvedValue({
+        data: [{ login: "alice" }, { login: "bob" }],
+      });
+      mockGetByUsername.mockImplementation(
+        async ({ username }: { username: string }) => ({
+          data: {
+            email: username === "alice" ? "alice@example.com" : null,
+          },
+        }),
+      );
+
+      const yields = await collect(
+        connector.syncGroups?.({
+          config: validConfig,
+          credentials,
+          cursor: null,
+          readIngestedDocuments: vi.fn(),
+        }) ?? (async function* () {})(),
+      );
+
+      expect(yields).toEqual([
+        {
+          groupId: "test-org/eng",
+          memberEmails: ["alice@example.com"],
+          cursor: "test-org/eng",
+        },
+      ]);
     });
   });
 });

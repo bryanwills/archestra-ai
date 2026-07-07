@@ -792,3 +792,219 @@ describe("ConfluenceConnector", () => {
     });
   });
 });
+
+describe("ConfluenceConnector permission sync", () => {
+  const config = {
+    confluenceUrl: "https://mysite.atlassian.net",
+    isCloud: true,
+    spaceKeys: ["DEV"],
+  };
+  const credentials = { email: "user@example.com", apiToken: "tok" };
+  let connector: ConfluenceConnector;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connector = new ConfluenceConnector();
+  });
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  async function collect<T>(gen: AsyncGenerator<T>): Promise<T[]> {
+    const out: T[] = [];
+    for await (const item of gen) out.push(item);
+    return out;
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: test router
+  function routeSendRequest(routes: Record<string, any>) {
+    mockSendRequest.mockImplementation(
+      // biome-ignore lint/suspicious/noExplicitAny: SDK request shape
+      async (req: any) => {
+        const url: string = req.url;
+        for (const [prefix, response] of Object.entries(routes)) {
+          if (url.startsWith(prefix)) return response;
+        }
+        return {};
+      },
+    );
+  }
+
+  test("supportsPermissionSync is true", () => {
+    expect(connector.supportsPermissionSync).toBe(true);
+  });
+
+  test("uses a page's own read restrictions (user + group)", async () => {
+    mockSearchContentByCQL.mockResolvedValue({
+      results: [{ id: "p1", space: { key: "DEV" }, ancestors: [] }],
+      _links: {},
+    });
+    routeSendRequest({
+      "/api/content/p1/restriction/byOperation/read": {
+        restrictions: {
+          user: { results: [{ accountId: "a1", email: "alice@example.com" }] },
+          group: { results: [{ name: "devs" }] },
+        },
+      },
+    });
+
+    const yields = await collect(
+      connector.syncDocumentPermissions?.({
+        config,
+        credentials,
+        cursor: null,
+        readIngestedDocuments: vi.fn(),
+      }) ?? (async function* () {})(),
+    );
+
+    expect(yields).toEqual([
+      {
+        sourceId: "p1",
+        cursor: undefined,
+        permissions: {
+          isPublic: false,
+          users: ["alice@example.com"],
+          groups: ["devs"],
+        },
+      },
+    ]);
+  });
+
+  test("falls back to the closest ancestor restriction when the page is unrestricted", async () => {
+    mockSearchContentByCQL.mockResolvedValue({
+      results: [
+        {
+          id: "p2",
+          space: { key: "DEV" },
+          ancestors: [{ id: "root" }, { id: "parent" }],
+        },
+      ],
+      _links: {},
+    });
+    routeSendRequest({
+      "/api/content/p2/restriction/byOperation/read": {
+        restrictions: { user: { results: [] }, group: { results: [] } },
+      },
+      "/api/content/parent/restriction/byOperation/read": {
+        restrictions: {
+          user: { results: [{ email: "bob@example.com" }] },
+          group: { results: [] },
+        },
+      },
+    });
+
+    const yields = await collect(
+      connector.syncDocumentPermissions?.({
+        config,
+        credentials,
+        cursor: null,
+        readIngestedDocuments: vi.fn(),
+      }) ?? (async function* () {})(),
+    );
+
+    expect(yields[0].permissions).toEqual({
+      isPublic: false,
+      users: ["bob@example.com"],
+      groups: [],
+    });
+  });
+
+  test("falls back to space read permissions when nothing is restricted", async () => {
+    mockSearchContentByCQL.mockResolvedValue({
+      results: [{ id: "p3", space: { key: "DEV" }, ancestors: [] }],
+      _links: {},
+    });
+    routeSendRequest({
+      "/api/content/p3/restriction/byOperation/read": {
+        restrictions: { user: { results: [] }, group: { results: [] } },
+      },
+      "/api/space/DEV": {
+        permissions: [
+          {
+            operation: { operation: "read" },
+            subjects: { group: { results: [{ name: "space-readers" }] } },
+          },
+        ],
+      },
+    });
+
+    const yields = await collect(
+      connector.syncDocumentPermissions?.({
+        config,
+        credentials,
+        cursor: null,
+        readIngestedDocuments: vi.fn(),
+      }) ?? (async function* () {})(),
+    );
+
+    expect(yields[0].permissions).toEqual({
+      isPublic: false,
+      users: [],
+      groups: ["space-readers"],
+    });
+  });
+
+  test("syncGroups expands groups to member emails", async () => {
+    routeSendRequest({
+      "/api/group/member": { results: [{ email: "alice@example.com" }] },
+      "/api/group": { results: [{ name: "devs" }] },
+    });
+
+    const yields = await collect(
+      connector.syncGroups?.({
+        config,
+        credentials,
+        cursor: null,
+        readIngestedDocuments: vi.fn(),
+      }) ?? (async function* () {})(),
+    );
+
+    expect(yields).toEqual([
+      {
+        groupId: "devs",
+        memberEmails: ["alice@example.com"],
+        cursor: "devs",
+      },
+      // Synthetic "any logged-in user" group: the union of every resolvable
+      // member across the instance's real groups.
+      {
+        groupId: "confluence-any-logged-in-user",
+        memberEmails: ["alice@example.com"],
+        cursor: "confluence-any-logged-in-user",
+      },
+    ]);
+  });
+
+  test("maps a built-in all-users group to the synthetic any-logged-in-user group", async () => {
+    // A page readable by the built-in `confluence-users` group means "any
+    // logged-in user" — its token must be the synthetic id so it resolves to
+    // every member, not a raw group name nothing is stored under.
+    mockSearchContentByCQL.mockResolvedValue({
+      results: [{ id: "p9", space: { key: "DEV" }, ancestors: [] }],
+      _links: {},
+    });
+    routeSendRequest({
+      "/api/content/p9/restriction/byOperation/read": {
+        restrictions: {
+          user: { results: [] },
+          group: { results: [{ name: "confluence-users" }] },
+        },
+      },
+    });
+
+    const yields = await collect(
+      connector.syncDocumentPermissions?.({
+        config,
+        credentials,
+        cursor: null,
+        readIngestedDocuments: vi.fn(),
+      }) ?? (async function* () {})(),
+    );
+
+    expect(yields[0].permissions).toEqual({
+      isPublic: false,
+      users: [],
+      groups: ["confluence-any-logged-in-user"],
+    });
+  });
+});

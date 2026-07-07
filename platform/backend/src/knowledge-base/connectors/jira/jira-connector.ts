@@ -5,13 +5,18 @@ import {
   type Version3Client,
 } from "jira.js";
 import type pino from "pino";
+import * as metrics from "@/observability/metrics";
 import type {
   ConnectorCredentials,
   ConnectorDocument,
   ConnectorItemFailure,
   ConnectorSyncBatch,
+  DocumentPermissions,
+  DocumentPermissionsYield,
+  GroupMembershipYield,
   JiraCheckpoint,
   JiraConfig,
+  PermissionSyncParams,
 } from "@/types";
 import { JiraConfigSchema } from "@/types";
 import {
@@ -21,6 +26,16 @@ import {
 } from "../base-connector";
 
 const BATCH_SIZE = 50;
+
+/**
+ * A project's static BROWSE_PROJECTS audience plus flags for the dynamic
+ * per-issue holders (reporter / assignee), resolved once per project.
+ */
+type ProjectBrowseAudience = {
+  base: DocumentPermissions;
+  includeReporter: boolean;
+  includeAssignee: boolean;
+};
 const SEARCH_FIELDS = [
   "summary",
   "description",
@@ -42,6 +57,13 @@ const SEARCH_FIELDS = [
 
 export class JiraConnector extends BaseConnector {
   type = "jira" as const;
+  supportsPermissionSync = true;
+
+  // Per-pass caches so audience resolution is O(projects), not O(issues).
+  private projectBrowseCache = new Map<string, ProjectBrowseAudience>();
+  private securitySchemeCache = new Map<string, number | null>();
+  private securityLevelCache = new Map<string, DocumentPermissions>();
+  private accountEmailCache = new Map<string, string | null>();
 
   async validateConfig(
     config: Record<string, unknown>,
@@ -296,7 +318,478 @@ export class JiraConnector extends BaseConnector {
       }
     }
   }
+
+  // ===== Permission sync hooks =====
+
+  /**
+   * Per-issue audience. The project's BROWSE_PROJECTS grant is resolved ONCE per
+   * project (anyone/applicationRole → public, user → email, group → group id,
+   * projectRole → role actors, reporter/assignee → the issue's own principals).
+   * An issue security level, when set, OVERRIDES the project audience with the
+   * level's members. Project schemes, security levels, and emails are cached, so
+   * upstream calls are O(projects + roles + levels), not O(issues).
+   */
+  async *syncDocumentPermissions(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<DocumentPermissionsYield> {
+    const config = parseJiraConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid Jira configuration for permission sync");
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js@5.3.1 permission-API types are broken (see createV3Client)
+    const client: any = config.isCloud
+      ? createV3Client(config, params.credentials, this.log)
+      : createV2Client(config, params.credentials, this.log);
+    const jql = buildJql(config, { type: "jira" });
+    const fields = ["project", "security", "reporter", "assignee"];
+
+    // Cloud paginates by an opaque nextPageToken; Server/DC by startAt.
+    let nextPageToken: string | undefined =
+      config.isCloud && params.cursor ? params.cursor : undefined;
+    let startAt =
+      !config.isCloud && params.cursor ? Number(params.cursor) || 0 : 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      await this.rateLimit();
+      let issues: JiraIssue[];
+      let nextCursor: string;
+      if (config.isCloud) {
+        const result =
+          await client.issueSearch.searchForIssuesUsingJqlEnhancedSearchPost({
+            jql,
+            fields,
+            nextPageToken,
+            maxResults: BATCH_SIZE,
+          });
+        issues = result.issues ?? [];
+        nextPageToken = result.nextPageToken ?? undefined;
+        hasMore = !!nextPageToken;
+        nextCursor = nextPageToken ?? "";
+      } else {
+        const result = await client.issueSearch.searchForIssuesUsingJqlPost({
+          jql,
+          fields,
+          startAt,
+          maxResults: BATCH_SIZE,
+        });
+        issues = result.issues ?? [];
+        startAt += issues.length;
+        hasMore =
+          issues.length >= BATCH_SIZE && startAt < (result.total ?? startAt);
+        nextCursor = String(startAt);
+      }
+
+      for (const issue of issues) {
+        const permissions = await this.resolveIssueAudience(
+          client,
+          config,
+          issue,
+        );
+        yield { sourceId: issue.key, permissions, cursor: nextCursor };
+      }
+    }
+  }
+
+  /** Groups → member emails; group id = the group name (matches grant holders). */
+  async *syncGroups(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<GroupMembershipYield> {
+    const config = parseJiraConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid Jira configuration for permission sync");
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js@5.3.1 permission-API types are broken
+    const client: any = config.isCloud
+      ? createV3Client(config, params.credentials, this.log)
+      : createV2Client(config, params.credentials, this.log);
+
+    let startAt = 0;
+    for (;;) {
+      await this.rateLimit();
+      const result = await client.groups.bulkGetGroups({
+        startAt,
+        maxResults: 50,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: SDK group shape
+      const groups: any[] = result.values ?? [];
+      for (const group of groups) {
+        const memberEmails = await this.resolveGroupMemberEmails(
+          client,
+          group.name,
+        );
+        yield { groupId: group.name, memberEmails, cursor: group.name };
+      }
+      startAt += groups.length;
+      if (startAt >= (result.total ?? startAt) || groups.length === 0) break;
+    }
+  }
+
+  private async resolveIssueAudience(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK issue shape
+    issue: any,
+  ): Promise<DocumentPermissions> {
+    const projectKey: string | undefined = issue.fields?.project?.key;
+    const security = issue.fields?.security;
+
+    // Issue security level overrides the project browse audience entirely.
+    if (security?.id && projectKey) {
+      return this.resolveSecurityLevelMembers(
+        client,
+        config,
+        projectKey,
+        String(security.id),
+      );
+    }
+
+    if (!projectKey) return {}; // no project → fail-closed
+    const audience = await this.resolveProjectBrowse(
+      client,
+      config,
+      projectKey,
+    );
+    const users = [...(audience.base.users ?? [])];
+    if (audience.includeReporter && issue.fields?.reporter?.emailAddress) {
+      users.push(issue.fields.reporter.emailAddress);
+    }
+    if (audience.includeAssignee && issue.fields?.assignee?.emailAddress) {
+      users.push(issue.fields.assignee.emailAddress);
+    }
+    return {
+      isPublic: audience.base.isPublic,
+      users,
+      groups: audience.base.groups,
+    };
+  }
+
+  private async resolveProjectBrowse(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    projectKey: string,
+  ): Promise<ProjectBrowseAudience> {
+    const cached = this.projectBrowseCache.get(projectKey);
+    if (cached) return cached;
+
+    const acc: MutableAudience = {
+      isPublic: false,
+      users: [],
+      groups: [],
+      includeReporter: false,
+      includeAssignee: false,
+    };
+    try {
+      await this.rateLimit();
+      const scheme =
+        await client.projectPermissionSchemes.getAssignedPermissionScheme({
+          projectKeyOrId: projectKey,
+          expand: "permissions",
+        });
+      let grants = scheme?.permissions;
+      if (!grants && scheme?.id) {
+        await this.rateLimit();
+        const full = await client.permissionSchemes.getPermissionSchemeGrants({
+          schemeId: scheme.id,
+          expand: "permissions",
+        });
+        grants = full?.permissions;
+      }
+      for (const grant of grants ?? []) {
+        if (grant?.permission !== "BROWSE_PROJECTS") continue;
+        await this.applyHolder(client, config, projectKey, grant.holder, acc);
+      }
+    } catch (error) {
+      this.log.debug(
+        { projectKey, error: extractErrorMessage(error) },
+        "Could not resolve project browse permissions; fail-closed",
+      );
+    }
+
+    const audience: ProjectBrowseAudience = {
+      base: {
+        isPublic: acc.isPublic,
+        users: acc.users,
+        groups: acc.groups,
+      },
+      includeReporter: acc.includeReporter,
+      includeAssignee: acc.includeAssignee,
+    };
+    this.projectBrowseCache.set(projectKey, audience);
+    return audience;
+  }
+
+  private async resolveSecurityLevelMembers(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    projectKey: string,
+    levelId: string,
+  ): Promise<DocumentPermissions> {
+    const schemeId = await this.resolveSecuritySchemeId(client, projectKey);
+    if (schemeId === null) return {}; // can't resolve → fail-closed
+    const cacheKey = `${schemeId}:${levelId}`;
+    const cached = this.securityLevelCache.get(cacheKey);
+    if (cached) return cached;
+
+    const acc: MutableAudience = {
+      isPublic: false,
+      users: [],
+      groups: [],
+      includeReporter: false,
+      includeAssignee: false,
+    };
+    try {
+      let startAt = 0;
+      for (;;) {
+        await this.rateLimit();
+        const result =
+          await client.issueSecurityLevel.getIssueSecurityLevelMembers({
+            issueSecuritySchemeId: schemeId,
+            issueSecurityLevelId: [Number(levelId)],
+            expand: "all",
+            startAt,
+            maxResults: 50,
+          });
+        // biome-ignore lint/suspicious/noExplicitAny: SDK member shape
+        const members: any[] = result?.values ?? [];
+        for (const member of members) {
+          await this.applyHolder(
+            client,
+            config,
+            projectKey,
+            member.holder,
+            acc,
+          );
+        }
+        startAt += members.length;
+        if (startAt >= (result?.total ?? startAt) || members.length === 0)
+          break;
+      }
+    } catch (error) {
+      this.log.debug(
+        { projectKey, levelId, error: extractErrorMessage(error) },
+        "Could not resolve issue security level members; fail-closed",
+      );
+    }
+
+    const audience: DocumentPermissions = {
+      isPublic: acc.isPublic,
+      users: acc.users,
+      groups: acc.groups,
+    };
+    this.securityLevelCache.set(cacheKey, audience);
+    return audience;
+  }
+
+  private async resolveSecuritySchemeId(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    projectKey: string,
+  ): Promise<number | null> {
+    const cached = this.securitySchemeCache.get(projectKey);
+    if (cached !== undefined) return cached;
+    let schemeId: number | null = null;
+    try {
+      await this.rateLimit();
+      const scheme =
+        await client.projectPermissionSchemes.getProjectIssueSecurityScheme({
+          projectKeyOrId: projectKey,
+        });
+      schemeId = typeof scheme?.id === "number" ? scheme.id : null;
+    } catch (error) {
+      this.log.debug(
+        { projectKey, error: extractErrorMessage(error) },
+        "Could not resolve project issue-security scheme",
+      );
+    }
+    this.securitySchemeCache.set(projectKey, schemeId);
+    return schemeId;
+  }
+
+  /** Apply one permission/security holder to the accumulating audience. */
+  private async applyHolder(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    projectKey: string,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK holder shape
+    holder: any,
+    acc: MutableAudience,
+  ): Promise<void> {
+    if (!holder?.type) return;
+    const identifier: string | undefined = holder.value ?? holder.parameter;
+    switch (holder.type) {
+      case "anyone":
+      case "applicationRole":
+        acc.isPublic = true;
+        break;
+      case "reporter":
+        acc.includeReporter = true;
+        break;
+      case "assignee":
+        acc.includeAssignee = true;
+        break;
+      case "group":
+      case "groupCustomField": {
+        // Group holders must be keyed by group NAME to byte-match the membership
+        // rows written by syncGroups/resolveGroupMemberEmails (keyed by group
+        // name). On Jira Cloud `holder.value` is the group UUID and
+        // `holder.parameter` is the name, so prefer `parameter`; Server/DC also
+        // carries the name in `parameter`. Using `value` here would emit a
+        // `group:jira_<uuid>` token no membership row ever matches — silently
+        // denying every member of the group.
+        const groupId: string | undefined = holder.parameter ?? holder.value;
+        if (groupId) acc.groups.push(groupId);
+        break;
+      }
+      case "user": {
+        const email = await this.resolveJiraEmail(client, config, identifier);
+        if (email) acc.users.push(email);
+        else this.meterDroppedPrincipals(1);
+        break;
+      }
+      case "projectRole": {
+        if (!identifier) break;
+        await this.applyProjectRoleActors(
+          client,
+          config,
+          projectKey,
+          Number(identifier),
+          acc,
+        );
+        break;
+      }
+      // projectLead and other dynamic holders are not resolved (documented).
+    }
+  }
+
+  private async applyProjectRoleActors(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    projectKey: string,
+    roleId: number,
+    acc: MutableAudience,
+  ): Promise<void> {
+    try {
+      await this.rateLimit();
+      const role = await client.projectRoles.getProjectRole({
+        projectIdOrKey: projectKey,
+        id: roleId,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: SDK actor shape
+      for (const actor of (role?.actors ?? []) as any[]) {
+        if (actor?.actorGroup?.name) {
+          acc.groups.push(actor.actorGroup.name);
+        } else if (actor?.actorUser?.accountId) {
+          const email = await this.resolveJiraEmail(
+            client,
+            config,
+            actor.actorUser.accountId,
+          );
+          if (email) acc.users.push(email);
+          else this.meterDroppedPrincipals(1);
+        }
+      }
+    } catch (error) {
+      this.log.debug(
+        { projectKey, roleId, error: extractErrorMessage(error) },
+        "Could not resolve project role actors",
+      );
+    }
+  }
+
+  /**
+   * Meter upstream principals dropped because their email could not be resolved
+   * (Cloud email privacy). Fail-closed under-grant — surfaced so admins see the
+   * coverage gap rather than silently narrowing an audience.
+   */
+  private meterDroppedPrincipals(count: number): void {
+    if (count <= 0) return;
+    this.log.debug(
+      { count, connectorType: this.type },
+      "Dropped Jira principals with no resolvable email (fail-closed)",
+    );
+    metrics.rag.reportPermissionSyncDroppedPrincipals({
+      connectorType: this.type,
+      reason: "no_email",
+      count,
+    });
+  }
+
+  private async resolveGroupMemberEmails(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    groupname: string,
+  ): Promise<string[]> {
+    const emails: string[] = [];
+    let startAt = 0;
+    for (;;) {
+      await this.rateLimit();
+      const result = await client.groups.getUsersFromGroup({
+        groupname,
+        startAt,
+        maxResults: 50,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: SDK user shape
+      const users: any[] = result?.values ?? [];
+      for (const user of users) {
+        const email = user?.emailAddress ?? null;
+        if (email) emails.push(email);
+      }
+      startAt += users.length;
+      if (startAt >= (result?.total ?? startAt) || users.length === 0) break;
+    }
+    return emails;
+  }
+
+  /**
+   * Resolve a Jira accountId/username to an email. Cloud largely hides emails
+   * (privacy) — an unresolved principal is fail-closed (documented limitation).
+   */
+  private async resolveJiraEmail(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    config: JiraConfig,
+    identifier: string | undefined,
+  ): Promise<string | null> {
+    if (!identifier) return null;
+    if (this.accountEmailCache.has(identifier)) {
+      return this.accountEmailCache.get(identifier) ?? null;
+    }
+    let email: string | null = null;
+    try {
+      await this.rateLimit();
+      const params = config.isCloud
+        ? { accountId: identifier }
+        : { username: identifier };
+      const user = await client.users.getUser(params);
+      email = user?.emailAddress ?? null;
+    } catch (error) {
+      this.log.debug(
+        { identifier, error: extractErrorMessage(error) },
+        "Could not resolve Jira user email",
+      );
+    }
+    this.accountEmailCache.set(identifier, email);
+    return email;
+  }
 }
+
+// biome-ignore lint/suspicious/noExplicitAny: SDK issue shape
+type JiraIssue = { key: string; fields?: any };
+
+/** Mutable accumulator used while folding grants/holders into an audience. */
+type MutableAudience = {
+  isPublic: boolean;
+  users: string[];
+  groups: string[];
+  includeReporter: boolean;
+  includeAssignee: boolean;
+};
 
 // ===== Module-level helpers =====
 

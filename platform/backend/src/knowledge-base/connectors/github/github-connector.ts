@@ -1,12 +1,17 @@
 import { Octokit } from "@octokit/rest";
 import type pino from "pino";
 import { resolveInstallationToken } from "@/integrations/github/app-auth";
+import * as metrics from "@/observability/metrics";
 import type {
   ConnectorCredentials,
   ConnectorDocument,
   ConnectorSyncBatch,
+  DocumentPermissions,
+  DocumentPermissionsYield,
   GithubCheckpoint,
   GithubConfig,
+  GroupMembershipYield,
+  PermissionSyncParams,
 } from "@/types";
 import { GithubConfigSchema } from "@/types";
 import {
@@ -20,6 +25,10 @@ const BATCH_SIZE = 50;
 
 export class GithubConnector extends BaseConnector {
   type = "github" as const;
+  supportsPermissionSync = true;
+
+  /** Per-pass cache of GitHub login → public email (or null when private). */
+  private userEmailCache = new Map<string, string | null>();
 
   async validateConfig(
     config: Record<string, unknown>,
@@ -483,9 +492,230 @@ export class GithubConnector extends BaseConnector {
       };
     }
   }
+
+  // ===== Permission sync hooks =====
+
+  /**
+   * Repo-scoped audience. The ACL is resolved ONCE per repo (private/public +
+   * collaborators + teams) and reused across every already-ingested document in
+   * that repo (read-back form), so upstream calls are O(repos + collaborators),
+   * not O(docs). Each yield's `cursor` is the repo key for crash-safe resume.
+   */
+  async *syncDocumentPermissions(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<DocumentPermissionsYield> {
+    const config = parseGithubConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid GitHub configuration for permission sync");
+    }
+    const octokit = await createOctokit(config, params.credentials, this.log);
+    const repos = await getRepos(octokit, config);
+    // Stable order so the resume cursor (a repo key) is monotonic.
+    const sorted = [...repos].sort((a, b) =>
+      githubRepoKey(a).localeCompare(githubRepoKey(b)),
+    );
+
+    for (const repo of sorted) {
+      const repoKey = githubRepoKey(repo);
+      // Resume: repos strictly before the cursor are already done. The cursor
+      // repo is re-processed (idempotent — same ACL) since a flush may have
+      // landed mid-repo.
+      if (params.cursor && repoKey < params.cursor) continue;
+
+      const permissions = await this.resolveRepoAudience(octokit, repo);
+
+      let afterId: string | null = null;
+      for (;;) {
+        const { documents, nextAfterId } = await params.readIngestedDocuments({
+          metadataFilter: { repo: repoKey },
+          afterId,
+          limit: GITHUB_READBACK_PAGE_SIZE,
+        });
+        for (const doc of documents) {
+          yield { sourceId: doc.sourceId, permissions, cursor: repoKey };
+        }
+        if (documents.length < GITHUB_READBACK_PAGE_SIZE) break;
+        afterId = nextAfterId;
+      }
+    }
+  }
+
+  /**
+   * Org teams → member emails, across every org that owns a synced repo. Group
+   * ids are namespaced `<org>/<team-slug>` to match the tokens written on
+   * documents (see resolveRepoAudience).
+   */
+  async *syncGroups(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<GroupMembershipYield> {
+    const config = parseGithubConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid GitHub configuration for permission sync");
+    }
+    const octokit = await createOctokit(config, params.credentials, this.log);
+    const repos = await getRepos(octokit, config);
+    const orgs = [...new Set(repos.map((repo) => repo.owner))].sort();
+
+    for (const org of orgs) {
+      for await (const team of this.paginate((page) =>
+        octokit.rest.teams
+          .list({ org, per_page: 100, page })
+          .then((response) => response.data),
+      )) {
+        const memberEmails: string[] = [];
+        for await (const member of this.paginate((page) =>
+          octokit.rest.teams
+            .listMembersInOrg({
+              org,
+              team_slug: team.slug,
+              per_page: 100,
+              page,
+            })
+            .then((response) => response.data),
+        )) {
+          const email = await this.resolveUserEmail(octokit, member.login);
+          if (email) memberEmails.push(email);
+        }
+        yield {
+          groupId: githubGroupId(org, team.slug),
+          memberEmails,
+          cursor: `${org}/${team.slug}`,
+        };
+      }
+    }
+  }
+
+  private async resolveRepoAudience(
+    octokit: Octokit,
+    repo: GithubRepo,
+  ): Promise<DocumentPermissions> {
+    await this.rateLimit();
+    const meta = await octokit.rest.repos.get({
+      owner: repo.owner,
+      repo: repo.name,
+    });
+    const isPublic = !meta.data.private;
+
+    const users: string[] = [];
+    let dropped = 0;
+    for await (const collaborator of this.paginate((page) =>
+      octokit.rest.repos
+        .listCollaborators({
+          owner: repo.owner,
+          repo: repo.name,
+          per_page: 100,
+          page,
+        })
+        .then((response) => response.data),
+    )) {
+      const email = await this.resolveUserEmail(octokit, collaborator.login);
+      if (email) users.push(email);
+      else dropped++;
+    }
+    this.meterDroppedPrincipals(dropped);
+
+    const groups: string[] = [];
+    for await (const team of this.paginate((page) =>
+      octokit.rest.repos
+        .listTeams({
+          owner: repo.owner,
+          repo: repo.name,
+          per_page: 100,
+          page,
+        })
+        .then((response) => response.data),
+    )) {
+      groups.push(githubGroupId(repo.owner, team.slug));
+    }
+
+    return { isPublic, users, groups };
+  }
+
+  /**
+   * Meter upstream principals dropped because their email could not be resolved
+   * (private GitHub email). Fail-closed under-grant — surfaced so admins see the
+   * coverage gap rather than silently narrowing an audience.
+   */
+  private meterDroppedPrincipals(count: number): void {
+    if (count <= 0) return;
+    this.log.debug(
+      { count, connectorType: this.type },
+      "Dropped GitHub principals with no resolvable email (fail-closed)",
+    );
+    metrics.rag.reportPermissionSyncDroppedPrincipals({
+      connectorType: this.type,
+      reason: "no_email",
+      count,
+    });
+  }
+
+  /**
+   * Resolve a login to its public email (per-pass cached). GitHub only exposes
+   * an email when the user has made it public — otherwise the principal can't be
+   * matched and is fail-closed (documented limitation).
+   */
+  private async resolveUserEmail(
+    octokit: Octokit,
+    login: string,
+  ): Promise<string | null> {
+    const cached = this.userEmailCache.get(login);
+    if (cached !== undefined) return cached;
+    let email: string | null = null;
+    try {
+      await this.rateLimit();
+      const response = await octokit.rest.users.getByUsername({
+        username: login,
+      });
+      email = response.data.email ?? null;
+    } catch (error) {
+      this.log.debug(
+        { login, error: extractErrorMessage(error) },
+        "Could not resolve GitHub user email",
+      );
+    }
+    this.userEmailCache.set(login, email);
+    return email;
+  }
+
+  /** Rate-limited generic pager over a 100-per-page GitHub list endpoint. */
+  private async *paginate<T>(
+    fetchPage: (page: number) => Promise<T[]>,
+  ): AsyncGenerator<T> {
+    let page = 1;
+    for (;;) {
+      await this.rateLimit();
+      const items = await fetchPage(page);
+      for (const item of items) yield item;
+      if (items.length < 100) break;
+      page++;
+    }
+  }
 }
 
 // ===== Module-level helpers =====
+
+const GITHUB_READBACK_PAGE_SIZE = 200;
+
+function githubItemSourceId(repoName: string, itemNumber: number): string {
+  return `${repoName}#${itemNumber}`;
+}
+
+function githubFileSourceId(repoName: string, filePath: string): string {
+  return `${repoName}#file:${filePath}`;
+}
+
+function githubRepoKey(repo: { owner: string; name: string }): string {
+  return `${repo.owner}/${repo.name}`;
+}
+
+/**
+ * Namespace a team by its org so team slugs never collide across orgs. Written
+ * on documents and stored by syncGroups identically, so the group data-contract
+ * byte-matches.
+ */
+function githubGroupId(org: string, teamSlug: string): string {
+  return `${org}/${teamSlug}`;
+}
 
 async function createOctokit(
   config: GithubConfig,
@@ -776,7 +1006,7 @@ function repositoryFileToDocument(
 ): ConnectorDocument {
   const fileName = filePath.split("/").pop() ?? filePath;
   return {
-    id: `${repo.name}#file:${filePath}`,
+    id: githubFileSourceId(repo.name, filePath),
     title: `${fileName} (${repo.owner}/${repo.name})`,
     content,
     sourceUrl: `${repo.htmlUrl}/blob/${branch}/${filePath}`,
@@ -808,7 +1038,7 @@ function itemToDocument(
   }
 
   return {
-    id: `${repo.name}#${item.number}`,
+    id: githubItemSourceId(repo.name, item.number),
     title: `${item.title} (${repo.owner}/${repo.name}#${item.number})`,
     content: contentParts.join("\n"),
     sourceUrl: item.html_url,

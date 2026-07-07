@@ -44,6 +44,15 @@ export const REQUEST_TIMEOUT_MS = 30000;
 export abstract class BaseConnector implements Connector {
   abstract type: ConnectorType;
 
+  /**
+   * Whether this connector implements the permission-sync hooks
+   * (`syncDocumentPermissions` / `syncGroups`). Default off so existing
+   * connectors are untouched; Jira/Confluence/GitHub (and Stage-2 connectors)
+   * override this `true` and implement the two generators. Nothing else in the
+   * permission-sync core is per-connector.
+   */
+  supportsPermissionSync = false;
+
   protected log: pino.Logger = defaultLogger;
   private rateLimitDelayMs: number;
   private itemFailures: ConnectorItemFailure[] = [];

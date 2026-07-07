@@ -1000,4 +1000,207 @@ describe("JiraConnector", () => {
       expect(extractTextFromAdf(adf)).toBe("");
     });
   });
+
+  describe("permission sync", () => {
+    async function collect<T>(gen: AsyncGenerator<T>): Promise<T[]> {
+      const out: T[] = [];
+      for await (const item of gen) out.push(item);
+      return out;
+    }
+
+    function searchHandler(issues: unknown[]) {
+      return http.post(`${CLOUD_HOST}/rest/api/3/search/jql`, () =>
+        HttpResponse.json({ issues, nextPageToken: undefined }),
+      );
+    }
+
+    const syncParams = {
+      config: validConfig,
+      credentials,
+      cursor: null,
+      readIngestedDocuments: async () => ({
+        documents: [],
+        nextAfterId: null,
+      }),
+    };
+
+    test("supportsPermissionSync is true", () => {
+      expect(connector.supportsPermissionSync).toBe(true);
+    });
+
+    test("project BROWSE_PROJECTS grants: anyone → public, group → group id", async () => {
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-1",
+            fields: { project: { key: "PROJ" }, security: null },
+          },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: { type: "group", value: "jira-users" },
+              },
+              { permission: "BROWSE_PROJECTS", holder: { type: "anyone" } },
+            ],
+          }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields).toEqual([
+        {
+          sourceId: "PROJ-1",
+          cursor: "",
+          permissions: { isPublic: true, users: [], groups: ["jira-users"] },
+        },
+      ]);
+    });
+
+    test("a Cloud group grant uses the group NAME (parameter), not the UUID (value)", async () => {
+      // On Jira Cloud a group holder's `value` is the group UUID and
+      // `parameter` is the name; syncGroups keys membership by NAME, so the
+      // document token must be the name to byte-match — else group members are
+      // silently denied.
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-9",
+            fields: { project: { key: "PROJ" }, security: null },
+          },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: {
+                  type: "group",
+                  value: "5e8f1c2a-0000-0000-0000-abcdef012345",
+                  parameter: "engineering",
+                },
+              },
+            ],
+          }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: [],
+        groups: ["engineering"],
+      });
+    });
+
+    test("a user grant resolves to an email via getUser", async () => {
+      server.use(
+        searchHandler([
+          { key: "PROJ-3", fields: { project: { key: "PROJ" } } },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: { type: "user", value: "acc-1" },
+              },
+            ],
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/user`, () =>
+          HttpResponse.json({ emailAddress: "bob@example.com" }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: ["bob@example.com"],
+        groups: [],
+      });
+    });
+
+    test("an issue security level overrides the project browse audience", async () => {
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-2",
+            fields: { project: { key: "PROJ" }, security: { id: "100" } },
+          },
+        ]),
+        http.get(
+          `${CLOUD_HOST}/rest/api/3/project/PROJ/issuesecuritylevelscheme`,
+          () => HttpResponse.json({ id: 20 }),
+        ),
+        http.get(
+          `${CLOUD_HOST}/rest/api/3/issuesecurityschemes/20/members`,
+          () =>
+            HttpResponse.json({
+              values: [
+                {
+                  issueSecurityLevelId: "100",
+                  holder: { type: "group", value: "secret-team" },
+                },
+              ],
+              total: 1,
+            }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: [],
+        groups: ["secret-team"],
+      });
+    });
+
+    test("syncGroups expands groups to member emails", async () => {
+      server.use(
+        http.get(`${CLOUD_HOST}/rest/api/3/group/bulk`, () =>
+          HttpResponse.json({ values: [{ name: "devs" }], total: 1 }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/group/member`, () =>
+          HttpResponse.json({
+            values: [{ emailAddress: "alice@example.com" }],
+            total: 1,
+          }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncGroups?.(syncParams) ?? (async function* () {})(),
+      );
+
+      expect(yields).toEqual([
+        {
+          groupId: "devs",
+          memberEmails: ["alice@example.com"],
+          cursor: "devs",
+        },
+      ]);
+    });
+  });
 });

@@ -7,7 +7,21 @@ import type {
   ConnectorCredentials,
   ConnectorDocument,
   ConnectorSyncBatch,
+  DocumentPermissions,
+  DocumentPermissionsYield,
+  GroupMembershipYield,
+  PermissionSyncParams,
 } from "@/types";
+
+/** Read restriction subjects for one Confluence content id. */
+type ConfluenceRestriction = {
+  // biome-ignore lint/suspicious/noExplicitAny: SDK subject shape
+  users: any[];
+  // biome-ignore lint/suspicious/noExplicitAny: SDK subject shape
+  groups: any[];
+};
+
+import * as metrics from "@/observability/metrics";
 import { ConfluenceConfigSchema } from "@/types";
 import {
   BaseConnector,
@@ -17,8 +31,38 @@ import {
 
 const DEFAULT_BATCH_SIZE = 50;
 
+/**
+ * Built-in Confluence groups that mean "any logged-in user" (Cloud:
+ * `confluence-users` / `_licensed-confluence`; Server/DC: `users`). A read grant
+ * to one of these is not a normal named group — it is "every authenticated
+ * user" — so it is mapped to the synthetic all-members group below.
+ */
+const CONFLUENCE_ALL_LOGGED_IN_GROUP_NAMES = new Set([
+  "confluence-users",
+  "_licensed-confluence",
+  "users",
+]);
+
+/**
+ * Stable synthetic group id modelling the "any logged-in user" audience. Its
+ * membership (emitted by `syncGroups`) is the union of every resolvable member
+ * across the instance's real groups, so a page/space readable by all
+ * authenticated users resolves to those members without depending on a built-in
+ * group being separately enumerable. Namespaced by the connector type into
+ * `group:confluence_confluence-any-logged-in-user` like any other group token.
+ */
+const CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID = "confluence-any-logged-in-user";
+
 export class ConfluenceConnector extends BaseConnector {
   type = "confluence" as const;
+  supportsPermissionSync = true;
+
+  // Per-pass caches so audience resolution is O(containers), not O(pages):
+  // space audiences, content read-restrictions (pages + ancestors), and
+  // account → email lookups are each resolved once.
+  private spaceAudienceCache = new Map<string, DocumentPermissions>();
+  private restrictionCache = new Map<string, ConfluenceRestriction | null>();
+  private accountEmailCache = new Map<string, string | null>();
 
   async validateConfig(
     config: Record<string, unknown>,
@@ -259,6 +303,353 @@ export class ConfluenceConnector extends BaseConnector {
         );
         throw error;
       }
+    }
+  }
+
+  // ===== Permission sync hooks =====
+
+  /**
+   * Per-page audience: page read-restrictions closest-first (the page, then its
+   * ancestors), falling back to the space's read permissions. A restricted page
+   * is visible only to its restriction's users/groups; an unrestricted page
+   * inherits the space audience. Restriction/space/email lookups are cached, so
+   * upstream calls are ~1 per page plus O(spaces) + O(distinct principals).
+   */
+  async *syncDocumentPermissions(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<DocumentPermissionsYield> {
+    const config = parseConfluenceConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid Confluence configuration for permission sync");
+    }
+    const client = createConfluenceClient(config, params.credentials, this.log);
+    const cql = buildCql(config, {
+      type: "confluence",
+      lastSyncedAt: undefined,
+    });
+
+    let cursor: string | undefined =
+      params.cursor === null ? undefined : params.cursor;
+    let start = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      await this.rateLimit();
+      // biome-ignore lint/suspicious/noExplicitAny: SDK response type
+      let searchResult: any;
+      if (config.isCloud) {
+        searchResult = await client.content.searchContentByCQL({
+          cql,
+          cursor,
+          limit: DEFAULT_BATCH_SIZE,
+          expand: ["space", "ancestors"],
+        });
+      } else {
+        searchResult = await client.sendRequest(
+          {
+            url: "/api/content/search",
+            method: "GET",
+            params: {
+              cql,
+              start,
+              limit: DEFAULT_BATCH_SIZE,
+              expand: ["space", "ancestors"],
+            },
+          },
+          // biome-ignore lint/suspicious/noExplicitAny: SDK requires callback arg
+          undefined as any,
+        );
+      }
+
+      // biome-ignore lint/suspicious/noExplicitAny: SDK page shape
+      const results: any[] = searchResult.results ?? [];
+      for (const page of results) {
+        const permissions = await this.resolvePageAudience(client, page);
+        yield { sourceId: String(page.id), permissions, cursor };
+      }
+
+      const nextUrl: string | undefined = searchResult._links?.next;
+      if (config.isCloud) {
+        const match = nextUrl?.match(/cursor=([^&]+)/);
+        cursor = match ? decodeURIComponent(match[1]) : undefined;
+        hasMore = results.length >= DEFAULT_BATCH_SIZE && !!cursor;
+      } else {
+        start += results.length;
+        hasMore = results.length > 0 && !!nextUrl;
+      }
+    }
+  }
+
+  /**
+   * Confluence groups → member emails. Group ids are the group name, matching
+   * the `group.name` written on documents from read-restrictions.
+   */
+  async *syncGroups(
+    params: PermissionSyncParams,
+  ): AsyncGenerator<GroupMembershipYield> {
+    const config = parseConfluenceConfig(params.config);
+    if (!config) {
+      throw new Error("Invalid Confluence configuration for permission sync");
+    }
+    const client = createConfluenceClient(config, params.credentials, this.log);
+
+    // Accumulate every resolvable member across all real groups so the synthetic
+    // "any logged-in user" group (emitted last) can grant a doc readable by all
+    // authenticated users. Built-in all-users groups are folded into the
+    // synthetic id rather than stored under their raw name.
+    const allMemberEmails = new Set<string>();
+
+    for await (const group of this.paginate(client, "/api/group")) {
+      const memberEmails: string[] = [];
+      for await (const member of this.paginate(
+        client,
+        `/api/group/member?name=${encodeURIComponent(group.name)}`,
+      )) {
+        const email = await this.resolveConfluenceEmail(client, member);
+        if (email) {
+          memberEmails.push(email);
+          allMemberEmails.add(email);
+        }
+      }
+      const groupId = this.mapConfluenceGroupName(group.name);
+      yield { groupId, memberEmails, cursor: group.name };
+    }
+
+    // Synthetic all-members group: models "any logged-in user". Fail-closed —
+    // only members whose email actually resolved are granted.
+    yield {
+      groupId: CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID,
+      memberEmails: [...allMemberEmails],
+      cursor: CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID,
+    };
+  }
+
+  /**
+   * Fold Confluence's built-in "any logged-in user" groups into the stable
+   * synthetic group id so the audience resolves to every member; ordinary named
+   * groups pass through unchanged.
+   */
+  private mapConfluenceGroupName(name: string): string {
+    return CONFLUENCE_ALL_LOGGED_IN_GROUP_NAMES.has(name)
+      ? CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID
+      : name;
+  }
+
+  private async resolvePageAudience(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK page shape
+    page: any,
+  ): Promise<DocumentPermissions> {
+    // 1. The page's own read restrictions.
+    const own = await this.getReadRestrictions(client, String(page.id));
+    if (own) return this.restrictionToAudience(client, own);
+
+    // 2. Ancestors, closest-first (the array is root→parent, so reverse).
+    // biome-ignore lint/suspicious/noExplicitAny: SDK ancestor shape
+    const ancestors: any[] = [...(page.ancestors ?? [])].reverse();
+    for (const ancestor of ancestors) {
+      const restriction = await this.getReadRestrictions(
+        client,
+        String(ancestor.id),
+      );
+      if (restriction) return this.restrictionToAudience(client, restriction);
+    }
+
+    // 3. Space read permissions (cached per space).
+    return this.resolveSpaceAudience(client, page.space?.key);
+  }
+
+  private async restrictionToAudience(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    restriction: ConfluenceRestriction,
+  ): Promise<DocumentPermissions> {
+    const users: string[] = [];
+    let dropped = 0;
+    for (const user of restriction.users) {
+      const email = await this.resolveConfluenceEmail(client, user);
+      if (email) users.push(email);
+      else dropped++;
+    }
+    this.meterDroppedPrincipals(dropped);
+    const groups = restriction.groups
+      .map((group) => group.name as string)
+      .filter(Boolean)
+      .map((name) => this.mapConfluenceGroupName(name));
+    return { isPublic: false, users, groups };
+  }
+
+  /**
+   * Meter upstream principals dropped because their email could not be resolved
+   * (Cloud email privacy). Fail-closed under-grant — surfaced so admins see the
+   * coverage gap rather than silently narrowing an audience.
+   */
+  private meterDroppedPrincipals(count: number): void {
+    if (count <= 0) return;
+    this.log.debug(
+      { count, connectorType: this.type },
+      "Dropped Confluence principals with no resolvable email (fail-closed)",
+    );
+    metrics.rag.reportPermissionSyncDroppedPrincipals({
+      connectorType: this.type,
+      reason: "no_email",
+      count,
+    });
+  }
+
+  private async getReadRestrictions(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    contentId: string,
+  ): Promise<ConfluenceRestriction | null> {
+    const cached = this.restrictionCache.get(contentId);
+    if (cached !== undefined) return cached;
+
+    let restriction: ConfluenceRestriction | null = null;
+    try {
+      await this.rateLimit();
+      const response = await client.sendRequest(
+        {
+          url: `/api/content/${contentId}/restriction/byOperation/read`,
+          method: "GET",
+        },
+        // biome-ignore lint/suspicious/noExplicitAny: SDK requires callback arg
+        undefined as any,
+      );
+      const users = response?.restrictions?.user?.results ?? [];
+      const groups = response?.restrictions?.group?.results ?? [];
+      restriction =
+        users.length > 0 || groups.length > 0 ? { users, groups } : null;
+    } catch (error) {
+      this.log.debug(
+        { contentId, error: extractErrorMessage(error) },
+        "Could not read content restrictions",
+      );
+    }
+    this.restrictionCache.set(contentId, restriction);
+    return restriction;
+  }
+
+  private async resolveSpaceAudience(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    spaceKey: string | undefined,
+  ): Promise<DocumentPermissions> {
+    if (!spaceKey) return {}; // no space → fail-closed
+    const cached = this.spaceAudienceCache.get(spaceKey);
+    if (cached) return cached;
+
+    // Reading space read-permission subjects requires space-admin scope; when it
+    // is unavailable the page is fail-closed (documented limitation).
+    let audience: DocumentPermissions = {};
+    try {
+      await this.rateLimit();
+      const space = await client.sendRequest(
+        {
+          url: `/api/space/${spaceKey}`,
+          method: "GET",
+          params: { expand: "permissions" },
+        },
+        // biome-ignore lint/suspicious/noExplicitAny: SDK requires callback arg
+        undefined as any,
+      );
+      // biome-ignore lint/suspicious/noExplicitAny: SDK permission shape
+      const permissions: any[] = space?.permissions ?? [];
+      const users: string[] = [];
+      const groups: string[] = [];
+      let isPublic = false;
+      let dropped = 0;
+      for (const permission of permissions) {
+        const operation =
+          permission?.operation?.operation ?? permission?.operationKey;
+        if (operation !== "read" && operation !== "use") continue;
+        if (permission?.anonymousAccess) isPublic = true;
+        for (const user of permission?.subjects?.user?.results ?? []) {
+          const email = await this.resolveConfluenceEmail(client, user);
+          if (email) users.push(email);
+          else dropped++;
+        }
+        for (const group of permission?.subjects?.group?.results ?? []) {
+          if (group?.name) groups.push(this.mapConfluenceGroupName(group.name));
+        }
+      }
+      this.meterDroppedPrincipals(dropped);
+      audience = { isPublic, users, groups };
+    } catch (error) {
+      this.log.debug(
+        { spaceKey, error: extractErrorMessage(error) },
+        "Could not read space permissions; page is fail-closed",
+      );
+    }
+    this.spaceAudienceCache.set(spaceKey, audience);
+    return audience;
+  }
+
+  /**
+   * Resolve a Confluence principal to an email. Cloud largely hides emails
+   * (privacy) — an unresolved principal is fail-closed (documented limitation).
+   */
+  private async resolveConfluenceEmail(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK subject shape
+    user: any,
+  ): Promise<string | null> {
+    const direct = user?.email ?? user?.emailAddress ?? null;
+    if (direct) return direct;
+    const key = user?.accountId ?? user?.username ?? user?.userKey;
+    if (!key) return null;
+    if (this.accountEmailCache.has(key)) {
+      return this.accountEmailCache.get(key) ?? null;
+    }
+    let email: string | null = null;
+    try {
+      await this.rateLimit();
+      const params = user?.accountId
+        ? { accountId: user.accountId }
+        : { username: key };
+      const response = await client.sendRequest(
+        { url: "/api/user", method: "GET", params },
+        // biome-ignore lint/suspicious/noExplicitAny: SDK requires callback arg
+        undefined as any,
+      );
+      email = response?.email ?? response?.emailAddress ?? null;
+    } catch (error) {
+      this.log.debug(
+        { key, error: extractErrorMessage(error) },
+        "Could not resolve Confluence user email",
+      );
+    }
+    this.accountEmailCache.set(key, email);
+    return email;
+  }
+
+  /** Rate-limited pager over a Confluence `results`-shaped list endpoint. */
+  private async *paginate(
+    // biome-ignore lint/suspicious/noExplicitAny: SDK client
+    client: any,
+    path: string,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK result shape
+  ): AsyncGenerator<any> {
+    let start = 0;
+    const limit = 200;
+    const separator = path.includes("?") ? "&" : "?";
+    for (;;) {
+      await this.rateLimit();
+      const response = await client.sendRequest(
+        {
+          url: `${path}${separator}limit=${limit}&start=${start}`,
+          method: "GET",
+        },
+        // biome-ignore lint/suspicious/noExplicitAny: SDK requires callback arg
+        undefined as any,
+      );
+      // biome-ignore lint/suspicious/noExplicitAny: SDK result shape
+      const results: any[] = response?.results ?? [];
+      for (const item of results) yield item;
+      if (results.length < limit) break;
+      start += results.length;
     }
   }
 }
