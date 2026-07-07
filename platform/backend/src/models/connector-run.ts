@@ -1,8 +1,9 @@
-import { and, count, desc, eq, inArray, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne, sql, sum } from "drizzle-orm";
 import db, { schema } from "@/database";
 import type {
   ConnectorRun,
   ConnectorRunListItem,
+  ConnectorRunType,
   InsertConnectorRun,
   UpdateConnectorRun,
 } from "@/types";
@@ -13,6 +14,8 @@ class ConnectorRunModel {
     connectorId: string;
     limit?: number;
     offset?: number;
+    /** When set, restrict to one job family (content|permission). */
+    runType?: ConnectorRunType;
   }): Promise<ConnectorRunListItem[]> {
     const t = schema.connectorRunsTable;
     let query = db
@@ -20,6 +23,7 @@ class ConnectorRunModel {
         id: t.id,
         connectorId: t.connectorId,
         status: t.status,
+        runType: t.runType,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
         documentsProcessed: t.documentsProcessed,
@@ -34,7 +38,12 @@ class ConnectorRunModel {
         createdAt: t.createdAt,
       })
       .from(t)
-      .where(eq(t.connectorId, params.connectorId))
+      .where(
+        and(
+          eq(t.connectorId, params.connectorId),
+          params.runType ? eq(t.runType, params.runType) : undefined,
+        ),
+      )
       .orderBy(desc(t.startedAt))
       .$dynamic();
 
@@ -70,11 +79,20 @@ class ConnectorRunModel {
     return await query;
   }
 
-  static async countByConnector(connectorId: string): Promise<number> {
+  static async countByConnector(
+    connectorId: string,
+    runType?: ConnectorRunType,
+  ): Promise<number> {
+    const t = schema.connectorRunsTable;
     const [result] = await db
       .select({ count: count() })
-      .from(schema.connectorRunsTable)
-      .where(eq(schema.connectorRunsTable.connectorId, connectorId));
+      .from(t)
+      .where(
+        and(
+          eq(t.connectorId, connectorId),
+          runType ? eq(t.runType, runType) : undefined,
+        ),
+      );
 
     return result?.count ?? 0;
   }
@@ -125,14 +143,21 @@ class ConnectorRunModel {
     connectorId: string;
     owner: string;
     leaseTtlSeconds: number;
+    /**
+     * Which job family to claim. `content` (default) and `permission`
+     * single-flight independently: a content run and a permission run for the
+     * same connector can both be `running`; two runs of the same family cannot.
+     */
+    runType?: ConnectorRunType;
   }): Promise<{ outcome: "claimed"; run: ConnectorRun } | { outcome: "busy" }> {
-    const { connectorId, owner, leaseTtlSeconds } = params;
+    const { connectorId, owner, leaseTtlSeconds, runType = "content" } = params;
     const t = schema.connectorRunsTable;
 
     const [run] = await db
       .insert(t)
       .values({
         connectorId,
+        runType,
         status: "running",
         startedAt: sql`now()`,
         documentsProcessed: 0,
@@ -141,14 +166,48 @@ class ConnectorRunModel {
         leaseExpiresAt: sql`now() + make_interval(secs => ${leaseTtlSeconds})`,
         heartbeatAt: sql`now()`,
       })
-      // Conflict on the single-flight partial index → a run already holds the
-      // slot → busy. (target + predicate must match the partial unique index.)
+      // Conflict on the composite single-flight partial index → a run of the
+      // same family already holds the slot → busy. (target + predicate must
+      // match the partial unique index (connector_id, run_type) WHERE running.)
       .onConflictDoNothing({
-        target: t.connectorId,
+        target: [t.connectorId, t.runType],
         where: sql`status = 'running'`,
       })
       .returning();
     return run ? { outcome: "claimed", run } : { outcome: "busy" };
+  }
+
+  /**
+   * The checkpoint a freshly-claimed run of `runType` should resume from, or
+   * null. `claim` inserts a brand-new run with no checkpoint, so on a re-enqueue
+   * that follows an interrupted run (the reaper marked it `partial`) we adopt
+   * that run's last checkpoint to continue the SAME generation from its cursor —
+   * re-touching only the un-processed tail rather than restarting the reconcile.
+   * Only resumes when the MOST RECENT terminal (non-`running`) run of the family
+   * is `partial`: after a successful run there is nothing to resume, so a stale
+   * older partial is never re-adopted. Excludes the just-claimed run.
+   */
+  static async findResumableCheckpoint(params: {
+    connectorId: string;
+    runType: ConnectorRunType;
+    excludeRunId: string;
+  }): Promise<unknown | null> {
+    const t = schema.connectorRunsTable;
+    const [latest] = await db
+      .select({ status: t.status, checkpoint: t.checkpoint })
+      .from(t)
+      .where(
+        and(
+          eq(t.connectorId, params.connectorId),
+          eq(t.runType, params.runType),
+          ne(t.id, params.excludeRunId),
+          ne(t.status, "running"),
+        ),
+      )
+      .orderBy(desc(t.startedAt))
+      .limit(1);
+    if (!latest || latest.status !== "partial") return null;
+    return latest.checkpoint ?? null;
   }
 
   /**
@@ -271,9 +330,9 @@ class ConnectorRunModel {
    * by the partial `connector_runs_lease_expires_at_idx`) and hits
    * `tasks_dequeue_idx` on (task_type, status), so it is not a table scan.
    */
-  static async reapExpiredRuns(): Promise<
-    Array<{ id: string; connectorId: string }>
-  > {
+  static async reapExpiredRuns(
+    runType: ConnectorRunType = "content",
+  ): Promise<Array<{ id: string; connectorId: string }>> {
     const { rows } = await db.execute<{ id: string; connectorId: string }>(sql`
       UPDATE connector_runs r
       SET status = 'partial',
@@ -281,6 +340,7 @@ class ConnectorRunModel {
           lease_epoch = lease_epoch + 1,
           error = 'Sync was interrupted (worker stopped heartbeating); resuming from checkpoint.'
       WHERE r.status = 'running'
+        AND r.run_type = ${runType}
         AND r.lease_expires_at < now()
         AND NOT EXISTS (
           SELECT 1 FROM tasks t

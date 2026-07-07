@@ -1,3 +1,4 @@
+import db, { schema } from "@/database";
 import { describe, expect, test } from "@/test";
 import KnowledgeBaseConnectorModel from "./knowledge-base-connector";
 
@@ -1140,6 +1141,38 @@ describe("KnowledgeBaseConnectorModel", () => {
         lastSyncStatus: "running",
       });
       await makeConnectorRun(connector.id, { status: "running" });
+
+      const corrected =
+        await KnowledgeBaseConnectorModel.reconcileOrphanedConnectorStatuses();
+
+      expect(corrected).not.toContain(connector.id);
+      expect(
+        (await KnowledgeBaseConnectorModel.findById(connector.id))
+          ?.lastSyncStatus,
+      ).toBe("running");
+    });
+
+    test("does not mirror a finished permission run into a live content status", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const org = await makeOrganization();
+      const kb = await makeKnowledgeBase(org.id);
+      const connector = await makeKnowledgeBaseConnector(kb.id, org.id);
+      // The connector is mid-flight on a CONTENT sync.
+      await KnowledgeBaseConnectorModel.update(connector.id, {
+        lastSyncStatus: "running",
+      });
+      // A PERMISSION run finished successfully, newer than any content run.
+      // The reconcile subquery filters run_type = 'content', so this finished
+      // permission run must never mirror into the content sync status.
+      await db.insert(schema.connectorRunsTable).values({
+        connectorId: connector.id,
+        runType: "permission",
+        status: "success",
+        startedAt: new Date(),
+      });
 
       const corrected =
         await KnowledgeBaseConnectorModel.reconcileOrphanedConnectorStatuses();

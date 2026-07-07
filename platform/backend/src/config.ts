@@ -1702,6 +1702,25 @@ const config = {
       process.env.ARCHESTRA_KNOWLEDGE_BASE_TASK_WORKER_MAX_CONCURRENT,
       2,
     ),
+    // Concurrency cap for the runtime-isolated permission-sync lane. Separate
+    // from the content lane so permission passes can neither starve nor be
+    // starved by content ingestion.
+    permissionSyncWorkerMaxConcurrent: parsePositiveInt(
+      process.env.ARCHESTRA_KB_PERMISSION_SYNC_WORKER_MAX_CONCURRENT,
+      1,
+    ),
+    // Global cron default for the permission-sync pass, applied to all
+    // auto-sync-permissions connectors. Overridable per-org on the Knowledge
+    // settings page (organization.permissionSyncSchedule). Default: every 30m.
+    permissionSyncScheduleDefault:
+      process.env.ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE ?? "*/30 * * * *",
+    // Batch size for the permission-sync pass's ACL writes and its
+    // generation-gated fail-close sweep. Bounds per-transaction work so
+    // mass-change bursts stay in short transactions (bounded WAL/lock).
+    permissionSyncBatchSize: parsePositiveInt(
+      process.env.ARCHESTRA_KB_PERMISSION_SYNC_BATCH_SIZE,
+      200,
+    ),
     taskWorkerShutdownTimeoutSeconds: parsePositiveInt(
       process.env.ARCHESTRA_KNOWLEDGE_BASE_TASK_WORKER_SHUTDOWN_TIMEOUT_SECONDS,
       30,

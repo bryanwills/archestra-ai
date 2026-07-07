@@ -16,12 +16,25 @@ class TaskModel {
     return result;
   }
 
-  static async dequeue(): Promise<Task | null> {
+  /**
+   * Dequeue the next pending task within a single lane. Filtering by the lane's
+   * task types (not a global FIFO) is what stops a saturated lane from
+   * head-of-line-blocking another lane's dequeue.
+   */
+  static async dequeue(
+    laneTaskTypes: readonly TaskType[],
+  ): Promise<Task | null> {
+    if (laneTaskTypes.length === 0) return null;
+    const types = sql.join(
+      laneTaskTypes.map((type) => sql`${type}`),
+      sql`, `,
+    );
     const { rows } = await db.execute<Task>(sql`
       WITH next_task AS (
         SELECT id FROM tasks
         WHERE status = 'pending'
           AND scheduled_for <= NOW()
+          AND task_type IN (${types})
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED

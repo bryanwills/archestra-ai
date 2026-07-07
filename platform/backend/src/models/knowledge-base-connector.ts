@@ -161,6 +161,11 @@ class KnowledgeBaseConnectorModel {
         lastSyncAt: schema.knowledgeBaseConnectorsTable.lastSyncAt,
         lastSyncStatus: schema.knowledgeBaseConnectorsTable.lastSyncStatus,
         lastSyncError: schema.knowledgeBaseConnectorsTable.lastSyncError,
+        lastPermissionSyncAt:
+          schema.knowledgeBaseConnectorsTable.lastPermissionSyncAt,
+        lastPermissionSyncStatus:
+          schema.knowledgeBaseConnectorsTable.lastPermissionSyncStatus,
+        aclConfigEpoch: schema.knowledgeBaseConnectorsTable.aclConfigEpoch,
         checkpoint: schema.knowledgeBaseConnectorsTable.checkpoint,
         createdAt: schema.knowledgeBaseConnectorsTable.createdAt,
         updatedAt: schema.knowledgeBaseConnectorsTable.updatedAt,
@@ -216,6 +221,11 @@ class KnowledgeBaseConnectorModel {
         lastSyncAt: schema.knowledgeBaseConnectorsTable.lastSyncAt,
         lastSyncStatus: schema.knowledgeBaseConnectorsTable.lastSyncStatus,
         lastSyncError: schema.knowledgeBaseConnectorsTable.lastSyncError,
+        lastPermissionSyncAt:
+          schema.knowledgeBaseConnectorsTable.lastPermissionSyncAt,
+        lastPermissionSyncStatus:
+          schema.knowledgeBaseConnectorsTable.lastPermissionSyncStatus,
+        aclConfigEpoch: schema.knowledgeBaseConnectorsTable.aclConfigEpoch,
         checkpoint: schema.knowledgeBaseConnectorsTable.checkpoint,
         createdAt: schema.knowledgeBaseConnectorsTable.createdAt,
         updatedAt: schema.knowledgeBaseConnectorsTable.updatedAt,
@@ -292,6 +302,22 @@ class KnowledgeBaseConnectorModel {
    * the EXISTS guard fails and the stale checkpoint write is dropped — a newer
    * run's checkpoint can't be clobbered.
    */
+  /**
+   * Atomically bump the connector's ACL fencing epoch. Called whenever
+   * visibility or teamIds change so every ACL writer that read the old epoch
+   * (an in-flight content-sync or permission-sync write) no-ops — the newest
+   * config change always wins regardless of job ordering. Returns the new epoch.
+   */
+  static async bumpAclConfigEpoch(connectorId: string): Promise<number> {
+    const { rows } = await db.execute<{ acl_config_epoch: number }>(sql`
+      UPDATE knowledge_base_connectors
+      SET acl_config_epoch = acl_config_epoch + 1
+      WHERE id = ${connectorId}
+      RETURNING acl_config_epoch
+    `);
+    return Number(rows[0]?.acl_config_epoch ?? 0);
+  }
+
   static async setCheckpointIfRunActive(params: {
     connectorId: string;
     runId: string;
@@ -341,6 +367,14 @@ class KnowledgeBaseConnectorModel {
    * statement, replacing the old task-scanning cleanup loop. A connector whose
    * latest run is still `running` is skipped (it is genuinely in progress), so
    * this never races a live run. Returns the ids it corrected, for logging.
+   *
+   * Scoped to `content` runs only: `last_sync_status`/`last_sync_error` mirror
+   * the CONTENT run family, and (by Guarantee 2) a permission run can be
+   * `running` concurrently with a content run. Without this filter the latest
+   * run per connector could be a permission run, and mirroring its status into
+   * the content fields would clobber a live content run's status — the exact
+   * cross-lane leak the runtime-isolation split forbids. Permission-run status
+   * lives in `last_permission_sync_*` and is owned by the permission reaper.
    */
   static async reconcileOrphanedConnectorStatuses(): Promise<string[]> {
     const { rows } = await db.execute<{ id: string }>(sql`
@@ -351,6 +385,7 @@ class KnowledgeBaseConnectorModel {
         SELECT DISTINCT ON (connector_id)
           connector_id, status, error
         FROM connector_runs
+        WHERE run_type = 'content'
         ORDER BY connector_id, started_at DESC
       ) latest
       WHERE c.id = latest.connector_id

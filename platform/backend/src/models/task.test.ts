@@ -1,7 +1,12 @@
 import { eq, inArray } from "drizzle-orm";
 import db, { schema } from "@/database";
 import { describe, expect, test } from "@/test";
+import { TaskTypeSchema } from "@/types";
 import TaskModel from "./task";
+
+// Every task type, so `dequeue` behaves like the pre-lane global FIFO for these
+// tests (lane isolation is covered separately).
+const ALL_LANES = TaskTypeSchema.options;
 
 describe("TaskModel", () => {
   describe("create", () => {
@@ -31,7 +36,7 @@ describe("TaskModel", () => {
         payload: { connectorId: "conn-1" },
       });
 
-      const dequeued = await TaskModel.dequeue();
+      const dequeued = await TaskModel.dequeue(ALL_LANES);
 
       expect(dequeued).not.toBeNull();
       expect(dequeued?.id).toBe(created.id);
@@ -41,7 +46,7 @@ describe("TaskModel", () => {
     });
 
     test("returns null when no tasks are pending", async () => {
-      const result = await TaskModel.dequeue();
+      const result = await TaskModel.dequeue(ALL_LANES);
       expect(result).toBeNull();
     });
 
@@ -53,7 +58,7 @@ describe("TaskModel", () => {
         scheduledFor: futureDate,
       });
 
-      const result = await TaskModel.dequeue();
+      const result = await TaskModel.dequeue(ALL_LANES);
       expect(result).toBeNull();
     });
   });
@@ -218,7 +223,7 @@ describe("TaskModel", () => {
         taskType: "connector_sync",
         payload: { connectorId: "conn-processing" },
       });
-      await TaskModel.dequeue();
+      await TaskModel.dequeue(ALL_LANES);
 
       await TaskModel.create({
         taskType: "connector_sync",
@@ -269,7 +274,7 @@ describe("TaskModel", () => {
       });
 
       // Simulate dequeue (sets status to processing, attempt to 1)
-      const dequeued = await TaskModel.dequeue();
+      const dequeued = await TaskModel.dequeue(ALL_LANES);
       expect(dequeued).not.toBeNull();
       expect(dequeued?.status).toBe("processing");
       expect(dequeued?.attempt).toBe(1);
@@ -330,8 +335,8 @@ describe("TaskModel", () => {
       });
 
       // Dequeue both
-      await TaskModel.dequeue();
-      await TaskModel.dequeue();
+      await TaskModel.dequeue(ALL_LANES);
+      await TaskModel.dequeue(ALL_LANES);
 
       const released = await TaskModel.releaseToQueue([task1.id, task2.id]);
       expect(released).toBe(2);
@@ -356,8 +361,8 @@ describe("TaskModel", () => {
         payload: { documentIds: ["d1"] },
       });
 
-      await TaskModel.dequeue();
-      await TaskModel.dequeue();
+      await TaskModel.dequeue(ALL_LANES);
+      await TaskModel.dequeue(ALL_LANES);
       // Simulate a task on a later retry so batch rows carry different attempts
       await db
         .update(schema.tasksTable)
@@ -381,7 +386,7 @@ describe("TaskModel", () => {
         taskType: "connector_sync",
         payload: { connectorId: "conn-1" },
       });
-      await TaskModel.dequeue();
+      await TaskModel.dequeue(ALL_LANES);
       // Force the edge: a processing task whose attempt is already 0
       await db
         .update(schema.tasksTable)
