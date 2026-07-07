@@ -3,7 +3,7 @@ title: Knowledge
 category: Knowledge
 order: 1
 description: Built-in RAG knowledge — Knowledge Bases, connectors, and retrieval architecture
-lastUpdated: 2026-07-05
+lastUpdated: 2026-07-07
 ---
 
 A Knowledge Base is a set of connectors that index your data for retrieval. Connectors pull from tools such as Jira, Confluence, GitHub, Notion, SharePoint, Google Drive, and Salesforce. An agent assigned a Knowledge Base can query that data to answer questions. The full RAG stack (chunking, embedding, hybrid search, reranking) runs inside Archestra — no external vector database or separate retrieval service required.
@@ -63,11 +63,30 @@ Each connector has a visibility setting that determines which users can retrieve
 | ------------------------- | --------------------------------------------------------------------------------- |
 | **Org-wide**              | All documents accessible to every user in the organization.                       |
 | **Team-scoped**           | Documents accessible only to members of the assigned teams.                       |
-| **Auto-sync permissions** | ACL entries synced from the source system (user emails, groups). Coming soon — see [#3218](https://github.com/archestra-ai/archestra/issues/3218). |
+| **Auto-sync permissions** | Per-document ACLs synced from the source system, so each user sees only what they can see upstream. See [Auto-Sync Permissions](#auto-sync-permissions). |
 
 Users with the `knowledgeSource:admin` role can view and query every connector regardless of visibility.
 
 > **Enterprise feature** (team-scoped visibility and auto-synced ACLs) — see the [Pricing Model](/docs/platform-pricing-model).
+
+### Auto-Sync Permissions
+
+Auto-sync permissions mirrors the source system's own access control into per-document ACLs. When a user calls `query_knowledge_sources`, they get back only the chunks they are allowed to see upstream — the same access they would have in the tool itself. A user with the `knowledgeSource:admin` role bypasses the ACL and sees everything.
+
+Supported connectors: **GitHub**, **Confluence**, and **Jira**. Support for Google Drive, Salesforce, and SharePoint is planned.
+
+**Identity model.** The join key is email, end to end. A document shared with an upstream user is visible when that user's Archestra email matches their upstream email. Each upstream group is expanded to its member emails on a periodic snapshot; at query time your email resolves your group memberships through a local join, so there are no upstream calls on the query path. Emails are trimmed and case-folded before matching.
+
+**Permission-sync pass.** A single pass per connector re-derives every document's ACL on a schedule. Each run is a full reconcile: it writes only what changed — no re-embedding — and fail-closes anything no longer visible upstream. The pass runs on a global cron schedule (default every 30 minutes), which an admin can override per organization on the **Settings > Knowledge** page. It runs in an isolated job lane, so permission sync never blocks content sync. See [`ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE`](/docs/platform-deployment#knowledge-base-configuration).
+
+Documents with empty or unknown permissions get an empty ACL, so only admins see them.
+
+**Limitations:**
+
+- **Upstream email privacy.** GitHub only exposes public emails, and Confluence and Jira Cloud largely hide them. A principal whose email cannot be resolved is fail-closed.
+- **Email is the only join key.** An Archestra user whose email differs from their upstream email will not match.
+- **Eventual consistency.** New or newly-changed access stays fail-closed until the next scheduled pass. Keep the schedule reasonably short.
+- **Credential scope.** Reading container-level permissions — Confluence space permissions, Jira project schemes, GitHub org teams and collaborator emails — needs adequate admin scope on the connector's credentials.
 
 ## Supported Connectors
 

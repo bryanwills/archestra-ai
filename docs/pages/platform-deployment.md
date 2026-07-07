@@ -1482,6 +1482,19 @@ These environment variables configure the [Knowledge Base](/docs/platform-knowle
   - Default: `true`
   - Set to `false` to use vector similarity search only.
 
+The following variables tune the permission-sync pass for connectors using [auto-sync permissions](/docs/platform-knowledge#auto-sync-permissions). Permission sync runs in its own worker lane, independent of content sync.
+
+- **`ARCHESTRA_KB_PERMISSION_SYNC_WORKER_MAX_CONCURRENT`** - Concurrency cap for the runtime-isolated permission-sync worker lane.
+  - Default: `1`
+  - This lane is separate from the content lane's `ARCHESTRA_KNOWLEDGE_BASE_TASK_WORKER_MAX_CONCURRENT`, so permission sync never competes with content sync for slots.
+
+- **`ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE`** - Global cron default for the permission-sync pass, applied to every auto-sync-permissions connector.
+  - Default: `*/30 * * * *` (every 30 minutes)
+  - An admin can override the schedule per organization on the **Settings > Knowledge** page. Keep it reasonably short — new or changed upstream access stays fail-closed until the next pass.
+
+- **`ARCHESTRA_KB_PERMISSION_SYNC_BATCH_SIZE`** - Batch size for the permission-sync pass's ACL writes and fail-close sweep.
+  - Default: `200`
+
 ### Audit Log Configuration
 
 The audit log records administrative actions (mutations via `/api/*` and auth events) across your organization. Automatic retention is **disabled by default** - audit rows are kept indefinitely unless an org admin opts in by setting a positive retention window.
