@@ -45,6 +45,7 @@ import {
   ConnectorInlineConfigFields,
   type ConnectorType,
   connectorNeedsEmail,
+  connectorSupportsAutoSync,
   getConnectorCredentialConfig,
   getConnectorDocsUrl,
   getConnectorTypeLabel,
@@ -112,6 +113,13 @@ export function CreateConnectorDialog({
     setSelectedType(type);
     form.setValue("connectorType", type);
     form.setValue("config", getDefaultConnectorConfig(type));
+    // Reset an auto-sync selection when switching to a type that can't support it.
+    if (
+      visibility === "auto-sync-permissions" &&
+      !connectorSupportsAutoSync(type)
+    ) {
+      setVisibility("org-wide");
+    }
     setStep("configure");
   };
 
@@ -368,6 +376,7 @@ export function CreateConnectorDialog({
                   teamIds={teamIds}
                   onTeamIdsChange={setTeamIds}
                   showTeamRequired
+                  supportsAutoSync={connectorSupportsAutoSync(connectorType)}
                 />
 
                 <div className="border-t" />

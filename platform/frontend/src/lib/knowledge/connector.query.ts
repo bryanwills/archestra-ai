@@ -277,15 +277,17 @@ export function useConnectorRuns(params: {
   connectorId: string;
   limit?: number;
   offset?: number;
+  /** Scope to one job family: "content" (Sync Runs) or "permission" (Permission Sync Runs). */
+  runType?: "content" | "permission";
 }) {
   const queryClient = useQueryClient();
-  const { connectorId, limit = 10, offset = 0 } = params;
+  const { connectorId, limit = 10, offset = 0, runType } = params;
   return useQuery({
-    queryKey: ["connectors", connectorId, "runs", { limit, offset }],
+    queryKey: ["connectors", connectorId, "runs", { limit, offset, runType }],
     queryFn: async () => {
       const { data, error } = await getConnectorRuns({
         path: { id: connectorId },
-        query: { limit, offset },
+        query: { limit, offset, ...(runType ? { runType } : {}) },
       });
       // A deleted/missing connector 404s here; degrade to a null result rather
       // than an error. Return null (not bare data) so react-query doesn't throw

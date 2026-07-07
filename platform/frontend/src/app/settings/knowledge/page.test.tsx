@@ -666,6 +666,72 @@ describe("KnowledgeSettingsPage", () => {
         embeddingModel: undefined,
         rerankerChatApiKeyId: null,
         rerankerModel: null,
+        permissionSyncSchedule: null,
+      });
+    });
+  });
+
+  describe("permission sync schedule", () => {
+    it("renders the permission-sync schedule control with the org's saved value", () => {
+      vi.mocked(useEnterpriseFeature).mockReturnValue(true);
+      mockOrganization = {
+        embeddingChatApiKeyId: null,
+        embeddingModel: null,
+        rerankerChatApiKeyId: null,
+        rerankerModel: null,
+        permissionSyncSchedule: "0 */6 * * *",
+      };
+      renderPage();
+
+      expect(screen.getByText("Permission Sync Schedule")).toBeInTheDocument();
+      // The picker's trigger shows the human label for the saved cron value.
+      expect(screen.getByText("Every 6 hours")).toBeInTheDocument();
+    });
+
+    it("does not render the permission-sync schedule control without the knowledge-base enterprise feature", () => {
+      // useEnterpriseFeature defaults to false in beforeEach
+      mockOrganization = {
+        embeddingChatApiKeyId: null,
+        embeddingModel: null,
+        rerankerChatApiKeyId: null,
+        rerankerModel: null,
+        permissionSyncSchedule: "0 */6 * * *",
+      };
+      renderPage();
+
+      expect(
+        screen.queryByText("Permission Sync Schedule"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("saves the edited permission-sync schedule via the update mutation", async () => {
+      const user = userEvent.setup();
+      vi.mocked(useEnterpriseFeature).mockReturnValue(true);
+      mockOrganization = {
+        embeddingChatApiKeyId: null,
+        embeddingModel: null,
+        rerankerChatApiKeyId: null,
+        rerankerModel: null,
+        permissionSyncSchedule: null,
+      };
+      renderPage();
+
+      const scheduleTrigger = screen
+        .getAllByRole("combobox")
+        .find((el) => el.textContent?.includes("Use the deployment default"));
+      if (!scheduleTrigger) {
+        throw new Error("Permission-sync schedule trigger not found");
+      }
+      await user.click(scheduleTrigger);
+      await user.click(screen.getByRole("button", { name: /Every hour/ }));
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(mockUpdateKnowledgeSettings).toHaveBeenCalledWith({
+        embeddingModel: undefined,
+        embeddingChatApiKeyId: null,
+        rerankerChatApiKeyId: null,
+        rerankerModel: null,
+        permissionSyncSchedule: "0 * * * *",
       });
     });
   });

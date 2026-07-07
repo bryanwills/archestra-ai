@@ -34,6 +34,7 @@ import {
   ConnectorAdvancedConfigFields,
   ConnectorInlineConfigFields,
   connectorNeedsEmail,
+  connectorSupportsAutoSync,
   getConnectorCredentialConfig,
   getConnectorDocsUrl,
   getConnectorTypeLabel,
@@ -288,6 +289,7 @@ export function EditConnectorDialog({
             teamIds={teamIds}
             onTeamIdsChange={setTeamIds}
             showTeamRequired
+            supportsAutoSync={connectorSupportsAutoSync(connectorType)}
           />
 
           <div className="border-t" />

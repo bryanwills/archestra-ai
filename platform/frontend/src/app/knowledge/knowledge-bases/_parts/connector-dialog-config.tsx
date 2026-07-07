@@ -312,6 +312,26 @@ export function getConnectorTypeLabel(type: ConnectorType): string {
   return CONNECTOR_DISPLAY_LABELS[type];
 }
 
+// SPDX-SnippetBegin
+// SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+// SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
+/**
+ * Connector types whose backend implementation supports auto-sync-permissions
+ * (`supportsPermissionSync`). Stage 1: GitHub, Confluence, Jira. Keep in sync
+ * with the connectors that set `supportsPermissionSync = true`; the backend
+ * re-validates on create/update (400 otherwise), so this only gates the UI.
+ */
+const AUTO_SYNC_CONNECTOR_TYPES: ReadonlySet<ConnectorType> = new Set([
+  "github",
+  "confluence",
+  "jira",
+]);
+
+export function connectorSupportsAutoSync(type: ConnectorType): boolean {
+  return AUTO_SYNC_CONNECTOR_TYPES.has(type);
+}
+// SPDX-SnippetEnd
+
 export function getConnectorUrlConfig(
   type: ConnectorType,
 ): ConnectorUrlConfig | null {

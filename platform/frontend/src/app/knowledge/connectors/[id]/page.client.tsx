@@ -103,15 +103,13 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     from === "knowledge-bases"
       ? "Back to Knowledge Bases"
       : "Back to Connectors";
+  const tabParam = searchParams.get("tab");
   const currentTab =
-    searchParams.get("tab") === "documents" ? "documents" : "runs";
-  const tabs = [
-    { label: "Sync Runs", href: `/knowledge/connectors/${connectorId}` },
-    {
-      label: "Documents",
-      href: `/knowledge/connectors/${connectorId}?tab=documents`,
-    },
-  ];
+    tabParam === "documents"
+      ? "documents"
+      : tabParam === "permission-runs"
+        ? "permission-runs"
+        : "runs";
 
   const {
     data: connector,
@@ -119,6 +117,26 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     isLoadingError,
     refetch,
   } = useConnector(connectorId);
+
+  // The "Permission Sync Runs" tab exists only for auto-sync-permissions
+  // connectors; content and permission runs are shown in separate tabs, each
+  // filtered by runType.
+  const isAutoSync = connector?.visibility === "auto-sync-permissions";
+  const tabs = [
+    { label: "Sync Runs", href: `/knowledge/connectors/${connectorId}` },
+    ...(isAutoSync
+      ? [
+          {
+            label: "Permission Sync Runs",
+            href: `/knowledge/connectors/${connectorId}?tab=permission-runs`,
+          },
+        ]
+      : []),
+    {
+      label: "Documents",
+      href: `/knowledge/connectors/${connectorId}?tab=documents`,
+    },
+  ];
   const syncConnector = useSyncConnector();
   const forceResync = useForceResyncConnector();
   const testConnection = useTestConnectorConnection();
@@ -133,6 +151,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     connectorId,
     limit: pageSize,
     offset: pageIndex * pageSize,
+    runType: currentTab === "permission-runs" ? "permission" : "content",
   });
 
   const handleSync = useCallback(async () => {
@@ -408,8 +427,9 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
           >
             {(runsData?.data ?? []).length === 0 ? (
               <div className="text-muted-foreground">
-                No sync runs yet. Trigger a manual sync or wait for the
-                scheduled sync.
+                {currentTab === "permission-runs"
+                  ? "No permission sync runs yet. Permission sync runs on a schedule; the first run tags this connector's documents with their upstream access."
+                  : "No sync runs yet. Trigger a manual sync or wait for the scheduled sync."}
               </div>
             ) : (
               <DataTable
