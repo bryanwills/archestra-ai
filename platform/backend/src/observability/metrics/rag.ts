@@ -29,6 +29,12 @@ let ragQueryDuration: client.Histogram<string>;
 let ragQueriesTotal: client.Counter<string>;
 let ragQueryResultsCount: client.Histogram<string>;
 
+// ===== Permission-sync metrics (auto-sync-permissions connectors) =====
+let ragPermissionSyncsTotal: client.Counter<string>;
+let ragPermissionSyncGroupFailuresTotal: client.Counter<string>;
+let ragPermissionSyncDroppedPrincipalsTotal: client.Counter<string>;
+let ragKnowledgeQueryUnresolvedIdentityTotal: client.Counter<string>;
+
 let initialized = false;
 
 export function initializeRagMetrics(): void {
@@ -101,6 +107,29 @@ export function initializeRagMetrics(): void {
     enableExemplars: true,
   });
 
+  ragPermissionSyncsTotal = new client.Counter({
+    name: "rag_permission_syncs_total",
+    help: "Total permission-sync passes for auto-sync-permissions connectors",
+    labelNames: ["connector_type", "status"],
+  });
+
+  ragPermissionSyncGroupFailuresTotal = new client.Counter({
+    name: "rag_permission_sync_group_failures_total",
+    help: "Permission-sync group-enumeration failures (group step failed but the document reconcile still ran)",
+    labelNames: ["connector_type"],
+  });
+
+  ragPermissionSyncDroppedPrincipalsTotal = new client.Counter({
+    name: "rag_permission_sync_dropped_principals_total",
+    help: "Upstream principals dropped during permission sync (fail-closed under-grant), e.g. no resolvable email — a coverage gap admins should see",
+    labelNames: ["connector_type", "reason"],
+  });
+
+  ragKnowledgeQueryUnresolvedIdentityTotal = new client.Counter({
+    name: "rag_knowledge_query_unresolved_identity_total",
+    help: "query_knowledge_sources calls where the caller's identity could not be resolved to an email, so only org-wide chunks were returned (fail-closed)",
+  });
+
   logger.info("RAG metrics initialized");
 }
 
@@ -166,6 +195,57 @@ export function reportEmbeddingBatch(params: {
     { status: params.status },
     params.documentCount,
   );
+}
+
+/**
+ * Reports a completed permission-sync pass for an auto-sync-permissions
+ * connector (docs scanned / ACLs changed / fail-closed for dashboards).
+ */
+export function reportPermissionSync(params: {
+  connectorType: string;
+  status: "success" | "partial";
+}): void {
+  if (!ragPermissionSyncsTotal) return;
+  ragPermissionSyncsTotal.inc({
+    connector_type: params.connectorType,
+    status: params.status,
+  });
+}
+
+/**
+ * Reports that a permission-sync pass's group-enumeration step failed. The
+ * document reconcile still runs (per-step failure isolation), but group-based
+ * grants may be stale — surfaced so admins see the coverage gap.
+ */
+export function reportPermissionSyncGroupFailure(connectorType: string): void {
+  if (!ragPermissionSyncGroupFailuresTotal) return;
+  ragPermissionSyncGroupFailuresTotal.inc({ connector_type: connectorType });
+}
+
+/**
+ * Reports upstream principals dropped during permission sync (fail-closed
+ * under-grant) — e.g. an audience member whose email could not be resolved.
+ */
+export function reportPermissionSyncDroppedPrincipals(params: {
+  connectorType: string;
+  reason: "no_email";
+  count: number;
+}): void {
+  if (!ragPermissionSyncDroppedPrincipalsTotal || params.count <= 0) return;
+  ragPermissionSyncDroppedPrincipalsTotal.inc(
+    { connector_type: params.connectorType, reason: params.reason },
+    params.count,
+  );
+}
+
+/**
+ * Reports a `query_knowledge_sources` call whose caller had no resolvable
+ * email, so only `org:*` chunks were returned (fail-closed): the caller sees
+ * neither `user_email:`- nor `group:`-scoped documents.
+ */
+export function reportKnowledgeQueryUnresolvedIdentity(): void {
+  if (!ragKnowledgeQueryUnresolvedIdentityTotal) return;
+  ragKnowledgeQueryUnresolvedIdentityTotal.inc();
 }
 
 /**

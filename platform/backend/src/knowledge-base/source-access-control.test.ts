@@ -1,6 +1,9 @@
 import { KbChunkModel, KbDocumentModel } from "@/models";
 import { describe, expect, test } from "@/test";
+import { buildGroupToken, normalizeEmail } from "./acl-tokens";
 import {
+  buildDocumentAccessControlList,
+  buildUserAccessControlList,
   didKnowledgeSourceAclInputsChange,
   knowledgeSourceAccessControlService,
 } from "./source-access-control";
@@ -231,5 +234,145 @@ describe("knowledgeSourceAccessControlService", () => {
 
     expect(refreshedDocument?.acl).toEqual(["org:*"]);
     expect(refreshedChunks[0]?.acl).toEqual(["org:*"]);
+  });
+
+  test("does not overwrite auto-sync connector document ACLs on refresh", async ({
+    makeOrganization,
+    makeKnowledgeBase,
+    makeKnowledgeBaseConnector,
+  }) => {
+    const org = await makeOrganization();
+    const knowledgeBase = await makeKnowledgeBase(org.id);
+    const connector = await makeKnowledgeBaseConnector(
+      knowledgeBase.id,
+      org.id,
+      {
+        visibility: "auto-sync-permissions",
+      },
+    );
+    const document = await KbDocumentModel.create({
+      organizationId: org.id,
+      sourceId: "ext-1",
+      connectorId: connector.id,
+      title: "Doc 1",
+      content: "content",
+      contentHash: "hash-1",
+      acl: ["user_email:owner@example.com"],
+    });
+
+    await knowledgeSourceAccessControlService.refreshConnectorDocumentAccessControlLists(
+      connector.id,
+    );
+
+    // The permission-sync pass owns per-doc ACLs; the bulk refresh must no-op.
+    const refreshed = await KbDocumentModel.findById(document.id);
+    expect(refreshed?.acl).toEqual(["user_email:owner@example.com"]);
+  });
+});
+
+describe("buildDocumentAccessControlList (auto-sync-permissions)", () => {
+  test("builds public ∪ user ∪ group tokens and normalizes emails", () => {
+    const acl = buildDocumentAccessControlList({
+      visibility: "auto-sync-permissions",
+      teamIds: [],
+      connectorType: "github",
+      permissions: {
+        isPublic: true,
+        users: ["Alice@Example.com", " bob@example.com "],
+        groups: ["eng"],
+      },
+    });
+
+    expect(acl).toEqual([
+      "org:*",
+      "user_email:alice@example.com",
+      "user_email:bob@example.com",
+      "group:github_eng",
+    ]);
+  });
+
+  test("empty permissions ⇒ empty ACL (fail-closed)", () => {
+    expect(
+      buildDocumentAccessControlList({
+        visibility: "auto-sync-permissions",
+        teamIds: [],
+        connectorType: "github",
+        permissions: {},
+      }),
+    ).toEqual([]);
+    expect(
+      buildDocumentAccessControlList({
+        visibility: "auto-sync-permissions",
+        teamIds: [],
+        connectorType: "github",
+      }),
+    ).toEqual([]);
+  });
+
+  test("dedupes repeated principals", () => {
+    const acl = buildDocumentAccessControlList({
+      visibility: "auto-sync-permissions",
+      teamIds: [],
+      connectorType: "jira",
+      permissions: {
+        users: ["a@example.com", "A@example.com"],
+        groups: ["dev", "dev"],
+      },
+    });
+
+    expect(acl).toEqual(["user_email:a@example.com", "group:jira_dev"]);
+  });
+
+  test("drops groups when connector type is unknown", () => {
+    const acl = buildDocumentAccessControlList({
+      visibility: "auto-sync-permissions",
+      teamIds: [],
+      permissions: { users: ["a@example.com"], groups: ["eng"] },
+    });
+
+    expect(acl).toEqual(["user_email:a@example.com"]);
+  });
+
+  test("over-cap audience falls back to org:*", () => {
+    const users = Array.from({ length: 1001 }, (_, i) => `u${i}@example.com`);
+    const acl = buildDocumentAccessControlList({
+      visibility: "auto-sync-permissions",
+      teamIds: [],
+      connectorType: "github",
+      permissions: { users },
+    });
+
+    expect(acl).toEqual(["org:*"]);
+  });
+});
+
+describe("buildUserAccessControlList", () => {
+  test("includes org, normalized user email, teams, and group tokens", () => {
+    const acl = buildUserAccessControlList({
+      userEmail: "  User@Example.com ",
+      teamIds: ["team-a"],
+      groupTokens: [
+        buildGroupToken({ connectorType: "github", groupId: "eng" }),
+      ],
+    });
+
+    expect(acl).toEqual([
+      "org:*",
+      "user_email:user@example.com",
+      "team:team-a",
+      "group:github_eng",
+    ]);
+  });
+});
+
+describe("acl-tokens helpers", () => {
+  test("normalizeEmail case-folds and trims", () => {
+    expect(normalizeEmail("  Foo@Bar.COM ")).toBe("foo@bar.com");
+  });
+
+  test("buildGroupToken namespaces by connector type", () => {
+    expect(
+      buildGroupToken({ connectorType: "confluence", groupId: "42" }),
+    ).toBe("group:confluence_42");
   });
 });

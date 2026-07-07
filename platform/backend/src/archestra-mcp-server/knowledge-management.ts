@@ -30,10 +30,12 @@ import {
   AgentConnectorAssignmentModel,
   AgentKnowledgeBaseModel,
   AgentModel,
+  KbExternalUserGroupModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
   UserModel,
 } from "@/models";
+import * as metrics from "@/observability/metrics";
 import {
   type AclEntry,
   InsertKnowledgeBaseConnectorSchema,
@@ -605,10 +607,30 @@ async function handleQueryKnowledgeSources(params: {
     if (context.userId) {
       const user = await UserModel.getById(context.userId);
       if (user?.email) {
+        // Resolve the user's upstream group memberships for any in-scope
+        // auto-sync-permissions connector (local SQL, no upstream call). Rows
+        // only exist for auto-sync connectors, so this is a no-op for the
+        // org-wide / team-scoped case.
+        const groupTokens =
+          await KbExternalUserGroupModel.findGroupTokensForUser({
+            memberEmail: user.email,
+            connectorIds,
+          });
         userAcl = buildUserAccessControlList({
           userEmail: user.email,
           teamIds: access?.teamIds ?? [],
+          groupTokens,
         });
+      } else {
+        // The caller has no resolvable email, so their identity can't be joined
+        // to any `user_email:` / `group:` grant — they see only `org:*` chunks
+        // (fail-closed under-grant, never over-grant). Surface the coverage gap
+        // so admins can see it rather than silently dropping the caller.
+        logger.warn(
+          { userId: context.userId },
+          "query_knowledge_sources caller has no resolvable email; returning org-wide chunks only (fail-closed)",
+        );
+        metrics.rag.reportKnowledgeQueryUnresolvedIdentity();
       }
     }
 

@@ -51,6 +51,7 @@ class KbDocumentModel {
         contentHash: schema.kbDocumentsTable.contentHash,
         sourceUrl: schema.kbDocumentsTable.sourceUrl,
         acl: schema.kbDocumentsTable.acl,
+        aclSyncGeneration: schema.kbDocumentsTable.aclSyncGeneration,
         metadata: schema.kbDocumentsTable.metadata,
         embeddingStatus: schema.kbDocumentsTable.embeddingStatus,
         chunkCount: schema.kbDocumentsTable.chunkCount,
@@ -108,6 +109,7 @@ class KbDocumentModel {
         contentHash: schema.kbDocumentsTable.contentHash,
         sourceUrl: schema.kbDocumentsTable.sourceUrl,
         acl: schema.kbDocumentsTable.acl,
+        aclSyncGeneration: schema.kbDocumentsTable.aclSyncGeneration,
         metadata: schema.kbDocumentsTable.metadata,
         embeddingStatus: schema.kbDocumentsTable.embeddingStatus,
         chunkCount: schema.kbDocumentsTable.chunkCount,
@@ -324,6 +326,7 @@ class KbDocumentModel {
         contentHash: schema.kbDocumentsTable.contentHash,
         sourceUrl: schema.kbDocumentsTable.sourceUrl,
         acl: schema.kbDocumentsTable.acl,
+        aclSyncGeneration: schema.kbDocumentsTable.aclSyncGeneration,
         metadata: schema.kbDocumentsTable.metadata,
         embeddingStatus: schema.kbDocumentsTable.embeddingStatus,
         chunkCount: schema.kbDocumentsTable.chunkCount,
@@ -386,18 +389,29 @@ class KbDocumentModel {
     return result.rowCount ?? 0;
   }
 
-  static async updateAclByConnector(
-    connectorId: string,
-    acl: AclEntry[],
-  ): Promise<number> {
-    // Skip rows that already have the target ACL to avoid unnecessary rewrites,
-    // WAL churn, and vacuum work when connector visibility is re-applied.
+  /**
+   * Bulk-apply a connector-level ACL to every document (org-wide / team-scoped
+   * connectors, via `refreshConnectorDocumentAccessControlLists`). Epoch-fenced:
+   * if the connector's `acl_config_epoch` changed since the caller read it (a
+   * concurrent visibility/teamIds change), the whole write no-ops so the newest
+   * config change wins regardless of ordering. Rows already at the target ACL
+   * are skipped to avoid needless GIN churn.
+   */
+  static async updateAclByConnector(params: {
+    connectorId: string;
+    acl: AclEntry[];
+    aclConfigEpoch: number;
+  }): Promise<number> {
+    const aclJson = JSON.stringify(params.acl);
     const result = await db.execute(sql`
       WITH updated AS (
-        UPDATE ${schema.kbDocumentsTable}
-        SET acl = ${JSON.stringify(acl)}::jsonb
-        WHERE ${schema.kbDocumentsTable.connectorId} = ${connectorId}
-          AND ${schema.kbDocumentsTable.acl} IS DISTINCT FROM ${JSON.stringify(acl)}::jsonb
+        UPDATE ${schema.kbDocumentsTable} AS d
+        SET acl = ${aclJson}::jsonb
+        FROM ${schema.knowledgeBaseConnectorsTable} AS c
+        WHERE d.connector_id = c.id
+          AND d.connector_id = ${params.connectorId}
+          AND c.acl_config_epoch = ${params.aclConfigEpoch}
+          AND d.acl IS DISTINCT FROM ${aclJson}::jsonb
         RETURNING 1
       )
       SELECT COUNT(*)::int AS count FROM updated
@@ -405,6 +419,183 @@ class KbDocumentModel {
 
     const count = result.rows[0]?.count;
     return typeof count === "number" ? count : Number(count ?? 0);
+  }
+
+  // ===== Permission-sync pass (auto-sync-permissions connectors) =====
+
+  /**
+   * Lean projection of the current per-document ACL state for a batch of source
+   * ids, used by the permission-sync pass to diff without loading document
+   * content. O(batch) memory.
+   */
+  static async findAclStateBySourceIds(params: {
+    connectorId: string;
+    sourceIds: string[];
+  }): Promise<{ id: string; sourceId: string | null; acl: string[] }[]> {
+    if (params.sourceIds.length === 0) return [];
+
+    return await db
+      .select({
+        id: schema.kbDocumentsTable.id,
+        sourceId: schema.kbDocumentsTable.sourceId,
+        acl: schema.kbDocumentsTable.acl,
+      })
+      .from(schema.kbDocumentsTable)
+      .where(
+        and(
+          eq(schema.kbDocumentsTable.connectorId, params.connectorId),
+          inArray(schema.kbDocumentsTable.sourceId, params.sourceIds),
+        ),
+      );
+  }
+
+  /**
+   * Keyset-paginated read-back of a connector's ingested documents for
+   * container-scoped permission tagging (GitHub: repo → its docs). Filters by an
+   * optional `metadata` JSONB equality map, orders by id ascending, and returns
+   * a lean `{ id, sourceId, metadata }` projection. O(limit) memory.
+   */
+  static async findIngestedForReadback(params: {
+    connectorId: string;
+    metadataFilter?: Record<string, string>;
+    afterId?: string | null;
+    limit: number;
+  }): Promise<
+    {
+      id: string;
+      sourceId: string | null;
+      metadata: Record<string, unknown> | null;
+    }[]
+  > {
+    const t = schema.kbDocumentsTable;
+    const metadataConditions = Object.entries(params.metadataFilter ?? {}).map(
+      ([key, value]) => sql`${t.metadata}->>${key} = ${value}`,
+    );
+    return await db
+      .select({
+        id: t.id,
+        sourceId: t.sourceId,
+        metadata: t.metadata,
+      })
+      .from(t)
+      .where(
+        and(
+          eq(t.connectorId, params.connectorId),
+          params.afterId ? sql`${t.id} > ${params.afterId}::uuid` : undefined,
+          ...metadataConditions,
+        ),
+      )
+      .orderBy(t.id)
+      .limit(params.limit);
+  }
+
+  /**
+   * Write a changed document's ACL and stamp it with the current reconcile
+   * generation, in one epoch-fenced statement. The chunk ACLs must already have
+   * been rewritten (crash-safe ordering: chunks first, then this doc row). If
+   * the connector's `acl_config_epoch` changed since the ACL was computed, the
+   * write no-ops (returns false). Returns whether the row was updated.
+   */
+  static async updateAclAndGeneration(params: {
+    documentId: string;
+    connectorId: string;
+    acl: AclEntry[];
+    generation: number;
+    aclConfigEpoch: number;
+  }): Promise<boolean> {
+    const result = await db.execute<{ id: string }>(sql`
+      UPDATE ${schema.kbDocumentsTable} AS d
+      SET acl = ${JSON.stringify(params.acl)}::jsonb,
+          acl_sync_generation = ${params.generation}
+      FROM ${schema.knowledgeBaseConnectorsTable} AS c
+      WHERE d.id = ${params.documentId}
+        AND d.connector_id = ${params.connectorId}
+        AND c.id = d.connector_id
+        AND c.acl_config_epoch = ${params.aclConfigEpoch}
+      RETURNING d.id
+    `);
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Stamp a batch of unchanged documents with the current reconcile generation
+   * (the narrow, HOT-friendly per-run cost — no ACL rewrite). Epoch-fenced.
+   * Returns the number of rows stamped.
+   */
+  static async stampGeneration(params: {
+    documentIds: string[];
+    connectorId: string;
+    generation: number;
+    aclConfigEpoch: number;
+  }): Promise<number> {
+    if (params.documentIds.length === 0) return 0;
+
+    const ids = sql.join(
+      params.documentIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const result = await db.execute(sql`
+      WITH updated AS (
+        UPDATE ${schema.kbDocumentsTable} AS d
+        SET acl_sync_generation = ${params.generation}
+        FROM ${schema.knowledgeBaseConnectorsTable} AS c
+        WHERE d.connector_id = ${params.connectorId}
+          AND c.id = d.connector_id
+          AND c.acl_config_epoch = ${params.aclConfigEpoch}
+          AND d.id IN (${ids})
+          AND d.acl_sync_generation IS DISTINCT FROM ${params.generation}
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS count FROM updated
+    `);
+    const count = result.rows[0]?.count;
+    return typeof count === "number" ? count : Number(count ?? 0);
+  }
+
+  /**
+   * Fail-close (acl=[]) a bounded batch of documents left behind by the current
+   * generation `G` — i.e. no longer visible upstream (deleted, or access fully
+   * removed). Clears both the document and its chunk ACLs and stamps the doc to
+   * `G` so the batch terminates. MUST be called only after generation `G`
+   * enumerates end-to-end (a partial generation never sweeps). Epoch-fenced.
+   * Loop until it returns 0. Returns the number of documents fail-closed.
+   */
+  static async failCloseStaleDocuments(params: {
+    connectorId: string;
+    generation: number;
+    aclConfigEpoch: number;
+    batchSize: number;
+  }): Promise<number> {
+    const result = await db.execute<{ id: string }>(sql`
+      WITH stale AS (
+        SELECT d.id
+        FROM ${schema.kbDocumentsTable} AS d
+        JOIN ${schema.knowledgeBaseConnectorsTable} AS c
+          ON c.id = d.connector_id
+        WHERE d.connector_id = ${params.connectorId}
+          AND c.acl_config_epoch = ${params.aclConfigEpoch}
+          AND d.acl_sync_generation IS DISTINCT FROM ${params.generation}
+        ORDER BY d.id
+        LIMIT ${params.batchSize}
+      ),
+      cleared_chunks AS (
+        UPDATE ${schema.kbChunksTable} AS chunk
+        SET acl = '[]'::jsonb
+        FROM stale
+        WHERE chunk.document_id = stale.id
+          AND chunk.acl IS DISTINCT FROM '[]'::jsonb
+        RETURNING 1
+      ),
+      cleared_docs AS (
+        UPDATE ${schema.kbDocumentsTable} AS d
+        SET acl = '[]'::jsonb, acl_sync_generation = ${params.generation}
+        FROM stale
+        WHERE d.id = stale.id
+        RETURNING d.id
+      )
+      SELECT id FROM cleared_docs
+    `);
+    return result.rows.length;
   }
 
   static async countByKnowledgeBaseIds(
