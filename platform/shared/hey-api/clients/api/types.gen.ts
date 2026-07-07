@@ -42083,7 +42083,7 @@ export type GetConnectorsResponses = {
             organizationId: string;
             name: string;
             description: string | null;
-            visibility: 'org-wide' | 'team-scoped';
+            visibility: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
             teamIds: Array<string>;
             connectorType: 'jira' | 'confluence' | 'github' | 'gitlab' | 'servicenow' | 'notion' | 'sharepoint' | 'gdrive' | 'dropbox' | 'onedrive' | 'asana' | 'linear' | 'outline' | 'salesforce' | 'web_crawler' | 'perforce';
             config: {
@@ -42228,9 +42228,12 @@ export type GetConnectorsResponses = {
             lastSyncAt: string | null;
             lastSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
             lastSyncError: string | null;
+            lastPermissionSyncAt: string | null;
+            lastPermissionSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
             checkpoint: string | number | boolean | null | {
                 [key: string]: unknown;
             } | Array<unknown> | null;
+            aclConfigEpoch: number;
             createdAt: string;
             updatedAt: string;
             assignedAgents: Array<{
@@ -42256,7 +42259,7 @@ export type CreateConnectorData = {
     body: {
         name: string;
         description?: string | null;
-        visibility?: 'org-wide' | 'team-scoped';
+        visibility?: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
         teamIds?: Array<string>;
         connectorType: 'jira' | 'confluence' | 'github' | 'gitlab' | 'servicenow' | 'notion' | 'sharepoint' | 'gdrive' | 'dropbox' | 'onedrive' | 'asana' | 'linear' | 'outline' | 'salesforce' | 'web_crawler' | 'perforce';
         config: {
@@ -42487,7 +42490,7 @@ export type CreateConnectorResponses = {
         organizationId: string;
         name: string;
         description: string | null;
-        visibility: 'org-wide' | 'team-scoped';
+        visibility: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
         teamIds: Array<string>;
         connectorType: 'jira' | 'confluence' | 'github' | 'gitlab' | 'servicenow' | 'notion' | 'sharepoint' | 'gdrive' | 'dropbox' | 'onedrive' | 'asana' | 'linear' | 'outline' | 'salesforce' | 'web_crawler' | 'perforce';
         config: {
@@ -42632,9 +42635,12 @@ export type CreateConnectorResponses = {
         lastSyncAt: string | null;
         lastSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         lastSyncError: string | null;
+        lastPermissionSyncAt: string | null;
+        lastPermissionSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         checkpoint: string | number | boolean | null | {
             [key: string]: unknown;
         } | Array<unknown> | null;
+        aclConfigEpoch: number;
         createdAt: string;
         updatedAt: string;
     };
@@ -42810,7 +42816,7 @@ export type GetConnectorResponses = {
         organizationId: string;
         name: string;
         description: string | null;
-        visibility: 'org-wide' | 'team-scoped';
+        visibility: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
         teamIds: Array<string>;
         connectorType: 'jira' | 'confluence' | 'github' | 'gitlab' | 'servicenow' | 'notion' | 'sharepoint' | 'gdrive' | 'dropbox' | 'onedrive' | 'asana' | 'linear' | 'outline' | 'salesforce' | 'web_crawler' | 'perforce';
         config: {
@@ -42955,9 +42961,12 @@ export type GetConnectorResponses = {
         lastSyncAt: string | null;
         lastSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         lastSyncError: string | null;
+        lastPermissionSyncAt: string | null;
+        lastPermissionSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         checkpoint: string | number | boolean | null | {
             [key: string]: unknown;
         } | Array<unknown> | null;
+        aclConfigEpoch: number;
         createdAt: string;
         updatedAt: string;
         totalDocsIngested: number;
@@ -42970,7 +42979,7 @@ export type UpdateConnectorData = {
     body: {
         name?: string;
         description?: string | null;
-        visibility?: 'org-wide' | 'team-scoped';
+        visibility?: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
         teamIds?: Array<string>;
         config?: {
             type: 'jira';
@@ -43201,7 +43210,7 @@ export type UpdateConnectorResponses = {
         organizationId: string;
         name: string;
         description: string | null;
-        visibility: 'org-wide' | 'team-scoped';
+        visibility: 'org-wide' | 'team-scoped' | 'auto-sync-permissions';
         teamIds: Array<string>;
         connectorType: 'jira' | 'confluence' | 'github' | 'gitlab' | 'servicenow' | 'notion' | 'sharepoint' | 'gdrive' | 'dropbox' | 'onedrive' | 'asana' | 'linear' | 'outline' | 'salesforce' | 'web_crawler' | 'perforce';
         config: {
@@ -43346,9 +43355,12 @@ export type UpdateConnectorResponses = {
         lastSyncAt: string | null;
         lastSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         lastSyncError: string | null;
+        lastPermissionSyncAt: string | null;
+        lastPermissionSyncStatus: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
         checkpoint: string | number | boolean | null | {
             [key: string]: unknown;
         } | Array<unknown> | null;
+        aclConfigEpoch: number;
         createdAt: string;
         updatedAt: string;
     };
@@ -43448,6 +43460,7 @@ export type GetConnectorDocumentsResponses = {
             contentHash: string;
             sourceUrl: string | null;
             acl: Array<string>;
+            aclSyncGeneration: number | null;
             metadata: {
                 [key: string]: unknown;
             } | null;
@@ -43645,6 +43658,7 @@ export type GetConnectorDocumentResponses = {
         contentHash: string;
         sourceUrl: string | null;
         acl: Array<string>;
+        aclSyncGeneration: number | null;
         metadata: {
             [key: string]: unknown;
         } | null;
@@ -43743,6 +43757,92 @@ export type SyncConnectorResponses = {
 };
 
 export type SyncConnectorResponse = SyncConnectorResponses[keyof SyncConnectorResponses];
+
+export type TriggerPermissionSyncData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connectors/{id}/permission-sync';
+};
+
+export type TriggerPermissionSyncErrors = {
+    /**
+     * Default Response
+     */
+    400: {
+        error: {
+            message: string;
+            type: 'api_validation_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    401: {
+        error: {
+            message: string;
+            type: 'api_authentication_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    403: {
+        error: {
+            message: string;
+            type: 'api_authorization_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    404: {
+        error: {
+            message: string;
+            type: 'api_not_found_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    409: {
+        error: {
+            message: string;
+            type: 'api_conflict_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    500: {
+        error: {
+            message: string;
+            type: 'api_internal_server_error';
+            internal_code?: string;
+        };
+    };
+};
+
+export type TriggerPermissionSyncError = TriggerPermissionSyncErrors[keyof TriggerPermissionSyncErrors];
+
+export type TriggerPermissionSyncResponses = {
+    /**
+     * Default Response
+     */
+    200: {
+        taskId: string;
+        status: string;
+    };
+};
+
+export type TriggerPermissionSyncResponse = TriggerPermissionSyncResponses[keyof TriggerPermissionSyncResponses];
 
 export type ForceResyncConnectorData = {
     body?: never;
@@ -44190,6 +44290,7 @@ export type GetConnectorRunsData = {
     query?: {
         limit?: number;
         offset?: number;
+        runType?: 'content' | 'permission';
     };
     url: '/api/connectors/{id}/runs';
 };
@@ -44268,6 +44369,7 @@ export type GetConnectorRunsResponses = {
             id: string;
             connectorId: string;
             status: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
+            runType: 'content' | 'permission';
             startedAt: string;
             completedAt: string | null;
             documentsProcessed: number | null;
@@ -44379,6 +44481,7 @@ export type GetConnectorRunResponses = {
         id: string;
         connectorId: string;
         status: 'running' | 'success' | 'completed_with_errors' | 'failed' | 'partial' | 'superseded';
+        runType: 'content' | 'permission';
         startedAt: string;
         completedAt: string | null;
         documentsProcessed: number | null;
@@ -54838,6 +54941,7 @@ export type GetOrganizationResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55133,6 +55237,7 @@ export type UpdateAppearanceSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55301,6 +55406,7 @@ export type UpdateSecuritySettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55467,6 +55573,7 @@ export type UpdateLlmSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55634,6 +55741,7 @@ export type UpdateAgentSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55812,6 +55920,7 @@ export type UpdateConnectionSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -55988,6 +56097,7 @@ export type UpdateDefaultEnvironmentResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -56154,6 +56264,7 @@ export type UpdateAuthSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -56223,6 +56334,7 @@ export type UpdateKnowledgeSettingsData = {
         embeddingChatApiKeyId?: string | null;
         rerankerChatApiKeyId?: string | null;
         rerankerModel?: string | null;
+        permissionSyncSchedule?: string | null;
     };
     path?: never;
     query?: never;
@@ -56322,6 +56434,7 @@ export type UpdateKnowledgeSettingsResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -56485,6 +56598,7 @@ export type DropEmbeddingConfigResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;
@@ -56737,6 +56851,7 @@ export type CompleteOnboardingResponses = {
         embeddingChatApiKeyId: string | null;
         rerankerChatApiKeyId: string | null;
         rerankerModel: string | null;
+        permissionSyncSchedule: string | null;
         defaultLlmModel: string | null;
         defaultLlmProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure' | 'github-copilot';
         defaultModelId: string | null;

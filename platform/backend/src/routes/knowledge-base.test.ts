@@ -8,6 +8,7 @@ import {
   KbDocumentModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
+  TaskModel,
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
 import type { FastifyInstanceWithZod } from "@/server";
@@ -720,6 +721,112 @@ describe("knowledge base routes", () => {
         });
         enterpriseTier.setUserCountForTesting(0);
       }
+    });
+
+    test("rejects auto-sync-permissions connector creation without enterprise license", async () => {
+      const original = config.enterpriseFeatures.knowledgeBase;
+      Object.defineProperty(config.enterpriseFeatures, "knowledgeBase", {
+        value: false,
+        writable: true,
+        configurable: true,
+      });
+      enterpriseTier.setUserCountForTesting(9999);
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/connectors",
+          payload: {
+            name: "Auto-sync Connector",
+            connectorType: "jira",
+            visibility: "auto-sync-permissions",
+            teamIds: [],
+            config: {
+              type: "jira",
+              jiraBaseUrl: "https://test.atlassian.net",
+              isCloud: true,
+              projectKey: "TEST",
+            },
+            credentials: { email: "user@example.com", apiToken: "token" },
+          },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().error.message).toContain(
+          "Auto-sync-permissions connectors require an enterprise license",
+        );
+      } finally {
+        Object.defineProperty(config.enterpriseFeatures, "knowledgeBase", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+        enterpriseTier.setUserCountForTesting(0);
+      }
+    });
+
+    test("rejects auto-sync-permissions for a supported connector type when the knowledge-base tier is inactive", async () => {
+      // github IS a permission-sync connector, so the 403 here proves the tier
+      // gate (not the connector-type gate) is what blocks the request.
+      const original = config.enterpriseFeatures.knowledgeBase;
+      Object.defineProperty(config.enterpriseFeatures, "knowledgeBase", {
+        value: false,
+        writable: true,
+        configurable: true,
+      });
+      enterpriseTier.setUserCountForTesting(9999);
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/connectors",
+          payload: {
+            name: "Auto-sync GitHub Connector",
+            connectorType: "github",
+            visibility: "auto-sync-permissions",
+            teamIds: [],
+            config: {
+              type: "github",
+              githubUrl: "https://api.github.com",
+              owner: "test-org",
+              authMethod: "pat",
+            },
+            credentials: { apiToken: "ghp_token" },
+          },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().error.message).toContain(
+          "Auto-sync-permissions connectors require an enterprise license",
+        );
+      } finally {
+        Object.defineProperty(config.enterpriseFeatures, "knowledgeBase", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+        enterpriseTier.setUserCountForTesting(0);
+      }
+    });
+
+    test("rejects auto-sync-permissions for a connector type that does not support it", async () => {
+      // notion is not a permission-sync connector (Stage 1: jira/confluence/github;
+      // Stage 2: gdrive/salesforce/sharepoint) — so this must 400.
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/connectors",
+        payload: {
+          name: "Auto-sync Notion",
+          connectorType: "notion",
+          visibility: "auto-sync-permissions",
+          teamIds: [],
+          config: { type: "notion" },
+          credentials: { apiToken: "token" },
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.message).toContain(
+        "Auto-sync permissions is not supported for notion connectors",
+      );
     });
 
     test("creates a perforce connector and normalizes depot paths", async () => {
@@ -1843,6 +1950,84 @@ describe("knowledge base routes", () => {
       });
 
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe("POST /api/connectors/:id/permission-sync", () => {
+    test("enqueues a permission_sync task for an auto-sync github connector", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/connectors/${connector.id}/permission-sync`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().status).toBe("enqueued");
+      expect(
+        await TaskModel.hasPendingOrProcessing("permission_sync", connector.id),
+      ).toBe(true);
+    });
+
+    test("rejects a non-auto-sync connector with 400", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "org-wide",
+        },
+      );
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/connectors/${connector.id}/permission-sync`,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.message).toContain(
+        "auto-sync-permissions connectors",
+      );
+    });
+
+    test("rejects a connector type that does not support permission sync", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      // notion is not a permission-sync connector, but a stored row can still
+      // carry the auto-sync visibility; the trigger must reject it.
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "notion",
+          visibility: "auto-sync-permissions",
+        },
+      );
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/connectors/${connector.id}/permission-sync`,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.message).toContain("not supported");
     });
   });
 });

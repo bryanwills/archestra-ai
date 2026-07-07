@@ -36,6 +36,7 @@ import {
   type ConnectorConfig,
   ConnectorConfigSchema,
   ConnectorCredentialsSchema,
+  ConnectorRunTypeSchema,
   type ConnectorType,
   ConnectorTypeSchema,
   constructResponseSchema,
@@ -517,10 +518,28 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           "Team-scoped connectors require an enterprise license",
         );
       }
+      if (
+        visibility === "auto-sync-permissions" &&
+        !enterpriseTier.isKnowledgeBaseActive()
+      ) {
+        throw new ApiError(
+          403,
+          "Auto-sync-permissions connectors require an enterprise license",
+        );
+      }
       // SPDX-SnippetEnd
 
       // Validate connector config
       const connectorImpl = getConnector(body.connectorType);
+      if (
+        visibility === "auto-sync-permissions" &&
+        !connectorImpl.supportsPermissionSync
+      ) {
+        throw new ApiError(
+          400,
+          `Auto-sync permissions is not supported for ${body.connectorType} connectors`,
+        );
+      }
       const validation = await connectorImpl.validateConfig(body.config);
       if (!validation.valid) {
         throw new ApiError(
@@ -843,7 +862,26 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           "Team-scoped connectors require an enterprise license",
         );
       }
+      if (
+        connector.visibility !== "auto-sync-permissions" &&
+        nextVisibility === "auto-sync-permissions" &&
+        !enterpriseTier.isKnowledgeBaseActive()
+      ) {
+        throw new ApiError(
+          403,
+          "Auto-sync-permissions connectors require an enterprise license",
+        );
+      }
       // SPDX-SnippetEnd
+      if (
+        nextVisibility === "auto-sync-permissions" &&
+        !getConnector(connector.connectorType).supportsPermissionSync
+      ) {
+        throw new ApiError(
+          400,
+          `Auto-sync permissions is not supported for ${connector.connectorType} connectors`,
+        );
+      }
       if (usesGithubAppConfig && body.credentials) {
         throw new ApiError(
           400,
@@ -934,8 +972,13 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           },
         })
       ) {
-        // This rewrites ACLs across every document and chunk for the connector,
-        // so only run it when the connector's actual ACL inputs changed.
+        // Bump the ACL fencing epoch so any in-flight ACL write computed against
+        // the old visibility/teamIds no-ops (the newest config change wins). For
+        // org-wide/team-scoped this then runs the authoritative bulk refresh; for
+        // auto-sync-permissions the refresh is a no-op and the next scheduled
+        // (epoch-fenced) permission pass is the authoritative writer — existing
+        // docs stay fail-closed until then, no immediate pass is enqueued.
+        await KnowledgeBaseConnectorModel.bumpAclConfigEpoch(id);
         await knowledgeSourceAccessControlService.refreshConnectorDocumentAccessControlLists(
           id,
         );
@@ -1034,6 +1077,71 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
       return reply.send({ taskId, status: "enqueued" });
     },
   );
+
+  // SPDX-SnippetBegin
+  // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+  // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
+  fastify.post(
+    "/api/connectors/:id/permission-sync",
+    {
+      schema: {
+        operationId: RouteId.TriggerPermissionSync,
+        description:
+          "Manually trigger a permission-sync pass for an auto-sync-permissions connector",
+        tags: ["Connectors"],
+        params: z.object({ id: z.uuid() }),
+        response: constructResponseSchema(
+          z.object({
+            taskId: z.string(),
+            status: z.string(),
+          }),
+        ),
+      },
+    },
+    async ({ params: { id }, organizationId, user }, reply) => {
+      const connector = await findConnectorOrThrow({
+        id,
+        organizationId,
+        userId: user.id,
+      });
+
+      if (connector.visibility !== "auto-sync-permissions") {
+        throw new ApiError(
+          400,
+          "Permission sync only applies to auto-sync-permissions connectors",
+        );
+      }
+      if (!getConnector(connector.connectorType).supportsPermissionSync) {
+        throw new ApiError(
+          400,
+          `Permission sync is not supported for ${connector.connectorType} connectors`,
+        );
+      }
+
+      const hasPendingOrProcessing = await TaskModel.hasPendingOrProcessing(
+        "permission_sync",
+        id,
+      );
+      if (hasPendingOrProcessing) {
+        throw new ApiError(
+          409,
+          "A permission sync is already in progress for this connector",
+        );
+      }
+
+      const taskId = await taskQueueService.enqueue({
+        taskType: "permission_sync",
+        payload: { connectorId: id },
+      });
+
+      await KnowledgeBaseConnectorModel.update(id, {
+        lastPermissionSyncStatus: "running",
+      });
+
+      return reply.send({ taskId, status: "enqueued" });
+    },
+  );
+  // SPDX-SnippetEnd
 
   fastify.post(
     "/api/connectors/:id/force-resync",
@@ -1252,14 +1360,21 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         description: "List connector runs",
         tags: ["Connectors"],
         params: z.object({ id: z.uuid() }),
-        querystring: PaginationQuerySchema,
+        querystring: PaginationQuerySchema.extend({
+          runType: ConnectorRunTypeSchema.optional(),
+        }),
         response: constructResponseSchema(
           createPaginatedResponseSchema(SelectConnectorRunListSchema),
         ),
       },
     },
     async (
-      { params: { id }, query: { limit, offset }, organizationId, user },
+      {
+        params: { id },
+        query: { limit, offset, runType },
+        organizationId,
+        user,
+      },
       reply,
     ) => {
       await findConnectorOrThrow({
@@ -1273,8 +1388,9 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           connectorId: id,
           limit,
           offset,
+          runType,
         }),
-        ConnectorRunModel.countByConnector(id),
+        ConnectorRunModel.countByConnector(id, runType),
       ]);
 
       const currentPage = Math.floor(offset / limit) + 1;

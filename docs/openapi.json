@@ -160474,7 +160474,8 @@
                             "type": "string",
                             "enum": [
                               "org-wide",
-                              "team-scoped"
+                              "team-scoped",
+                              "auto-sync-permissions"
                             ]
                           },
                           "teamIds": {
@@ -161310,6 +161311,23 @@
                             "nullable": true,
                             "type": "string"
                           },
+                          "lastPermissionSyncAt": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "lastPermissionSyncStatus": {
+                            "nullable": true,
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "success",
+                              "completed_with_errors",
+                              "failed",
+                              "partial",
+                              "superseded"
+                            ]
+                          },
                           "checkpoint": {
                             "nullable": true,
                             "anyOf": [
@@ -161342,6 +161360,11 @@
                                 "items": {}
                               }
                             ]
+                          },
+                          "aclConfigEpoch": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
                           },
                           "createdAt": {
                             "type": "string",
@@ -161391,7 +161414,10 @@
                           "lastSyncAt",
                           "lastSyncStatus",
                           "lastSyncError",
+                          "lastPermissionSyncAt",
+                          "lastPermissionSyncStatus",
                           "checkpoint",
+                          "aclConfigEpoch",
                           "createdAt",
                           "updatedAt",
                           "assignedAgents"
@@ -161710,7 +161736,8 @@
                     "type": "string",
                     "enum": [
                       "org-wide",
-                      "team-scoped"
+                      "team-scoped",
+                      "auto-sync-permissions"
                     ]
                   },
                   "teamIds": {
@@ -162597,7 +162624,8 @@
                       "type": "string",
                       "enum": [
                         "org-wide",
-                        "team-scoped"
+                        "team-scoped",
+                        "auto-sync-permissions"
                       ]
                     },
                     "teamIds": {
@@ -163433,6 +163461,23 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "lastPermissionSyncAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "lastPermissionSyncStatus": {
+                      "nullable": true,
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "success",
+                        "completed_with_errors",
+                        "failed",
+                        "partial",
+                        "superseded"
+                      ]
+                    },
                     "checkpoint": {
                       "nullable": true,
                       "anyOf": [
@@ -163466,6 +163511,11 @@
                         }
                       ]
                     },
+                    "aclConfigEpoch": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -163491,7 +163541,10 @@
                     "lastSyncAt",
                     "lastSyncStatus",
                     "lastSyncError",
+                    "lastPermissionSyncAt",
+                    "lastPermissionSyncStatus",
                     "checkpoint",
+                    "aclConfigEpoch",
                     "createdAt",
                     "updatedAt"
                   ],
@@ -163783,7 +163836,8 @@
                       "type": "string",
                       "enum": [
                         "org-wide",
-                        "team-scoped"
+                        "team-scoped",
+                        "auto-sync-permissions"
                       ]
                     },
                     "teamIds": {
@@ -164619,6 +164673,23 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "lastPermissionSyncAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "lastPermissionSyncStatus": {
+                      "nullable": true,
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "success",
+                        "completed_with_errors",
+                        "failed",
+                        "partial",
+                        "superseded"
+                      ]
+                    },
                     "checkpoint": {
                       "nullable": true,
                       "anyOf": [
@@ -164652,6 +164723,11 @@
                         }
                       ]
                     },
+                    "aclConfigEpoch": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -164680,7 +164756,10 @@
                     "lastSyncAt",
                     "lastSyncStatus",
                     "lastSyncError",
+                    "lastPermissionSyncAt",
+                    "lastPermissionSyncStatus",
                     "checkpoint",
+                    "aclConfigEpoch",
                     "createdAt",
                     "updatedAt",
                     "totalDocsIngested"
@@ -164951,7 +165030,8 @@
                     "type": "string",
                     "enum": [
                       "org-wide",
-                      "team-scoped"
+                      "team-scoped",
+                      "auto-sync-permissions"
                     ]
                   },
                   "teamIds": {
@@ -165739,7 +165819,8 @@
                       "type": "string",
                       "enum": [
                         "org-wide",
-                        "team-scoped"
+                        "team-scoped",
+                        "auto-sync-permissions"
                       ]
                     },
                     "teamIds": {
@@ -166575,6 +166656,23 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "lastPermissionSyncAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "lastPermissionSyncStatus": {
+                      "nullable": true,
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "success",
+                        "completed_with_errors",
+                        "failed",
+                        "partial",
+                        "superseded"
+                      ]
+                    },
                     "checkpoint": {
                       "nullable": true,
                       "anyOf": [
@@ -166608,6 +166706,11 @@
                         }
                       ]
                     },
+                    "aclConfigEpoch": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -166633,7 +166736,10 @@
                     "lastSyncAt",
                     "lastSyncStatus",
                     "lastSyncError",
+                    "lastPermissionSyncAt",
+                    "lastPermissionSyncStatus",
                     "checkpoint",
+                    "aclConfigEpoch",
                     "createdAt",
                     "updatedAt"
                   ],
@@ -167249,6 +167355,12 @@
                               "pattern": "^(org:\\*|team:.+|user_email:.+|group:.+)$"
                             }
                           },
+                          "aclSyncGeneration": {
+                            "nullable": true,
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
                           "metadata": {
                             "nullable": true,
                             "type": "object",
@@ -167386,6 +167498,7 @@
                           "contentHash",
                           "sourceUrl",
                           "acl",
+                          "aclSyncGeneration",
                           "metadata",
                           "embeddingStatus",
                           "chunkCount",
@@ -167757,6 +167870,12 @@
                         "pattern": "^(org:\\*|team:.+|user_email:.+|group:.+)$"
                       }
                     },
+                    "aclSyncGeneration": {
+                      "nullable": true,
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
                     "metadata": {
                       "nullable": true,
                       "type": "object",
@@ -167895,6 +168014,7 @@
                     "contentHash",
                     "sourceUrl",
                     "acl",
+                    "aclSyncGeneration",
                     "metadata",
                     "embeddingStatus",
                     "chunkCount",
@@ -168435,6 +168555,286 @@
           "Connectors"
         ],
         "description": "Manually trigger a connector sync\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`knowledgeSource:update`: Modify Knowledge Bases and Connectors",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "taskId",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "knowledgeSource:update"
+          ]
+        }
+      }
+    },
+    "/api/connectors/{id}/permission-sync": {
+      "post": {
+        "operationId": "triggerPermissionSync",
+        "tags": [
+          "Connectors"
+        ],
+        "description": "Manually trigger a permission-sync pass for an auto-sync-permissions connector\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`knowledgeSource:update`: Modify Knowledge Bases and Connectors",
         "parameters": [
           {
             "schema": {
@@ -170199,6 +170599,18 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "content",
+                "permission"
+              ]
+            },
+            "in": "query",
+            "name": "runType",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             },
@@ -170239,6 +170651,13 @@
                               "failed",
                               "partial",
                               "superseded"
+                            ]
+                          },
+                          "runType": {
+                            "type": "string",
+                            "enum": [
+                              "content",
+                              "permission"
                             ]
                           },
                           "startedAt": {
@@ -170338,6 +170757,7 @@
                           "id",
                           "connectorId",
                           "status",
+                          "runType",
                           "startedAt",
                           "completedAt",
                           "documentsProcessed",
@@ -170699,6 +171119,13 @@
                         "superseded"
                       ]
                     },
+                    "runType": {
+                      "type": "string",
+                      "enum": [
+                        "content",
+                        "permission"
+                      ]
+                    },
                     "startedAt": {
                       "type": "string",
                       "format": "date-time"
@@ -170800,6 +171227,7 @@
                     "id",
                     "connectorId",
                     "status",
+                    "runType",
                     "startedAt",
                     "completedAt",
                     "documentsProcessed",
@@ -208748,6 +209176,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -209103,6 +209535,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -209702,6 +210135,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -210057,6 +210494,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -210942,6 +211380,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -211297,6 +211739,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -211754,6 +212197,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -212109,6 +212556,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -212574,6 +213022,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -212929,6 +213381,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -213469,6 +213922,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -213824,6 +214281,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -214345,6 +214803,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -214700,6 +215162,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -215155,6 +215618,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -215510,6 +215977,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -215824,6 +216292,11 @@
                   "rerankerModel": {
                     "nullable": true,
                     "type": "string"
+                  },
+                  "permissionSyncSchedule": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1
                   }
                 }
               }
@@ -215975,6 +216448,10 @@
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     },
                     "rerankerModel": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "permissionSyncSchedule": {
                       "nullable": true,
                       "type": "string"
                     },
@@ -216333,6 +216810,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -216768,6 +217246,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -217123,6 +217605,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -217871,6 +218354,10 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "permissionSyncSchedule": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -218226,6 +218713,7 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
+                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",

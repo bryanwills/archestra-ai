@@ -1338,6 +1338,7 @@ export const requiredEndpointPermissionsMap: Partial<
   [RouteId.DeleteConnector]: { knowledgeSource: ["delete"] },
   [RouteId.DeleteConnectorDocument]: { knowledgeSource: ["delete"] },
   [RouteId.SyncConnector]: { knowledgeSource: ["update"] },
+  [RouteId.TriggerPermissionSync]: { knowledgeSource: ["update"] },
   [RouteId.ForceResyncConnector]: { knowledgeSource: ["update"] },
   [RouteId.TestConnectorConnection]: { knowledgeSource: ["read"] },
 

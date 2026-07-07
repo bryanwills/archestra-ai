@@ -547,6 +547,7 @@ export const RouteId = {
   DeleteConnector: "deleteConnector",
   DeleteConnectorDocument: "deleteConnectorDocument",
   SyncConnector: "syncConnector",
+  TriggerPermissionSync: "triggerPermissionSync",
   ForceResyncConnector: "forceResyncConnector",
   TestConnectorConnection: "testConnectorConnection",
 
