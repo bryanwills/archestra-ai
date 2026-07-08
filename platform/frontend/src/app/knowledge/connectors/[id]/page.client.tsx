@@ -23,6 +23,7 @@ import { useCallback, useState } from "react";
 import { ErrorBoundary } from "@/app/_parts/error-boundary";
 import { ConnectorDocumentsTable } from "@/app/knowledge/connectors/_parts/connector-documents-table";
 import { ConnectorRunDetailsDialog } from "@/app/knowledge/connectors/_parts/connector-run-details-dialog";
+import { ConnectorUserGroupsTable } from "@/app/knowledge/connectors/_parts/connector-user-groups-table";
 import { ConnectorStatusDot } from "@/app/knowledge/knowledge-bases/_parts/connector-enabled-dot";
 import { ConnectorTypeIcon } from "@/app/knowledge/knowledge-bases/_parts/connector-icons";
 import { ConnectorStatusBadge } from "@/app/knowledge/knowledge-bases/_parts/connector-status-badge";
@@ -143,7 +144,9 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       ? "documents"
       : tabParam === "permission-runs"
         ? "permission-runs"
-        : "runs";
+        : tabParam === "user-groups"
+          ? "user-groups"
+          : "runs";
 
   const {
     data: connector,
@@ -170,6 +173,14 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       label: "Documents",
       href: `/knowledge/connectors/${connectorId}?tab=documents`,
     },
+    ...(isAutoSync
+      ? [
+          {
+            label: "User Groups",
+            href: `/knowledge/connectors/${connectorId}?tab=user-groups`,
+          },
+        ]
+      : []),
   ];
   const syncConnector = useSyncConnector();
   const forceResync = useForceResyncConnector();
@@ -571,6 +582,8 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
 
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
+        ) : currentTab === "user-groups" ? (
+          <ConnectorUserGroupsTable connectorId={connectorId} />
         ) : (
           <LoadingWrapper
             isPending={isRunsPending}

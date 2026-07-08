@@ -53,6 +53,10 @@ vi.mock(
 vi.mock("@/app/knowledge/connectors/_parts/connector-documents-table", () => ({
   ConnectorDocumentsTable: () => null,
 }));
+vi.mock(
+  "@/app/knowledge/connectors/_parts/connector-user-groups-table",
+  () => ({ ConnectorUserGroupsTable: () => null }),
+);
 vi.mock("@/app/knowledge/knowledge-bases/_parts/edit-connector-dialog", () => ({
   EditConnectorDialog: () => null,
 }));
@@ -136,6 +140,15 @@ describe("ConnectorDetailPage", () => {
       expect(
         screen.getAllByRole("link", { name: "Sync Runs" }).length,
       ).toBeGreaterThan(0);
+      // Group visibility is also auto-sync-only.
+      const userGroupTabs = screen.getAllByRole("link", {
+        name: "User Groups",
+      });
+      expect(userGroupTabs.length).toBeGreaterThan(0);
+      expect(userGroupTabs[0]).toHaveAttribute(
+        "href",
+        `/knowledge/connectors/${CONNECTOR_ID}?tab=user-groups`,
+      );
     });
 
     it("hides the Permission Sync Runs tab for non-auto-sync connectors", () => {
@@ -150,6 +163,9 @@ describe("ConnectorDetailPage", () => {
 
       expect(
         screen.queryAllByRole("link", { name: "Permission Sync Runs" }),
+      ).toHaveLength(0);
+      expect(
+        screen.queryAllByRole("link", { name: "User Groups" }),
       ).toHaveLength(0);
       expect(
         screen.getAllByRole("link", { name: "Sync Runs" }).length,

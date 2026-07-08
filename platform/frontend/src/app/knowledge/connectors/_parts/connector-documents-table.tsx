@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Clock, ExternalLink, Eye, FileText, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { AclBadges } from "@/app/knowledge/connectors/_parts/acl-badges";
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog";
 import { SearchInput } from "@/components/search-input";
 import { StandardDialog } from "@/components/standard-dialog";
@@ -120,6 +121,12 @@ export function ConnectorDocumentsTable({
           ) : (
             <span className="text-sm text-muted-foreground">-</span>
           ),
+      },
+      {
+        id: "acl",
+        accessorKey: "acl",
+        header: "Access",
+        cell: ({ row }) => <AclBadges acl={row.original.acl} />,
       },
       {
         id: "updatedAt",

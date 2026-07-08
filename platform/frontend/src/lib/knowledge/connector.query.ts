@@ -19,6 +19,7 @@ const {
   testConnectorConnection,
   getConnectorRuns,
   getConnectorRun,
+  getConnectorUserGroups,
   triggerPermissionSync,
   getPermissionSyncCoverage,
   assignConnectorToKnowledgeBases,
@@ -335,6 +336,28 @@ export function useConnectorPermissionCoverage(params: {
         ? 5000
         : false;
     },
+  });
+}
+
+/**
+ * Synced external user groups for an auto-sync-permissions connector: member
+ * emails, the org users they resolve to, and per-group document grant counts.
+ */
+export function useConnectorUserGroups(params: {
+  connectorId: string;
+  enabled: boolean;
+}) {
+  const { connectorId, enabled } = params;
+  return useQuery({
+    queryKey: ["connectors", connectorId, "user-groups"],
+    queryFn: async () => {
+      const { data, error } = await getConnectorUserGroups({
+        path: { id: connectorId },
+      });
+      throwOnApiError(error, { allowNotFound: true, toastOnError: false });
+      return data ?? null;
+    },
+    enabled: enabled && !!connectorId,
   });
 }
 
