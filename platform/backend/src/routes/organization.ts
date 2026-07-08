@@ -14,6 +14,7 @@ import { hasPermission } from "@/auth";
 import config from "@/config";
 import db, { schema } from "@/database";
 import { syncBuiltInSkillsForOrganization } from "@/database/seed";
+import { daggerEnvironmentRuntimeManager } from "@/k8s/dagger-environment-runtime/manager";
 import mcpServerRuntimeManager from "@/k8s/mcp-server-runtime/manager";
 import { callEmbedding } from "@/knowledge-base/embedding-clients";
 import { resolveApiKeyFromChatApiKey } from "@/knowledge-base/kb-llm-client";
@@ -404,6 +405,18 @@ const organizationRoutes: FastifyPluginAsyncZod = async (fastify) => {
           catalogs,
           reason: "default environment network policy change",
         });
+      }
+
+      // The default engine carries the org's default egress policy and lives in
+      // the org's default namespace, so re-provision it when either changes.
+      // Awaited (like the MCP reconcile above) so the response reflects the
+      // applied egress policy rather than returning 200 while the engine still
+      // runs the old, looser policy; the manager no-ops when code-runtime/k8s is
+      // off. Runs after the DB patch, so a failure surfaces a retryable error.
+      if ("networkPolicy" in body || "namespace" in body) {
+        await daggerEnvironmentRuntimeManager.reconcileOrganizationDefault(
+          organization,
+        );
       }
 
       return reply.send(organization);

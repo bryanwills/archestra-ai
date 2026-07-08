@@ -81,6 +81,14 @@ export function buildDaggerEgressPolicies(params: {
    * degraded mode the MCP path uses when the cluster DNS IP can't be resolved.
    */
   clusterDnsIps?: string[];
+  /**
+   * Extra IPv4 CIDRs to block from the unrestricted floor's public-egress rule,
+   * on top of the built-in RFC1918/link-local/metadata ranges. Set to the
+   * cluster's Service and Pod CIDRs when they fall outside RFC1918 (common on
+   * GKE and other managed clusters) so sandboxed code can't reach in-cluster
+   * ClusterIP services. Only consumed by the floor.
+   */
+  additionalDeniedCidrs?: string[];
 }): DaggerEgressPolicyObject[] {
   const { environmentId, effectivePolicy, capabilities } = params;
   const clusterDnsIps = params.clusterDnsIps ?? [];
@@ -95,7 +103,11 @@ export function buildDaggerEgressPolicies(params: {
     return [
       {
         kind: "NetworkPolicy",
-        object: buildUnrestrictedFloorPolicy({ name, podSelectorLabels }),
+        object: buildUnrestrictedFloorPolicy({
+          name,
+          podSelectorLabels,
+          additionalDeniedCidrs: params.additionalDeniedCidrs ?? [],
+        }),
       },
     ];
   }
@@ -173,11 +185,17 @@ const FLOOR_DENIED_IPV4_CIDRS = [
 const FLOOR_DENIED_IPV6_CIDRS = ["::1/128", "fc00::/7", "fe80::/10"];
 
 // Open-egress floor for `unrestricted` engines: DNS + all public egress with the
-// ranges above blocked.
+// ranges above blocked. `additionalDeniedCidrs` extends the IPv4 block list with
+// operator-supplied ranges (e.g. a cluster's Service/Pod CIDRs outside RFC1918).
 function buildUnrestrictedFloorPolicy(params: {
   name: string;
   podSelectorLabels: Record<string, string>;
+  additionalDeniedCidrs: string[];
 }): k8s.V1NetworkPolicy {
+  const deniedIpv4 = [
+    ...FLOOR_DENIED_IPV4_CIDRS,
+    ...params.additionalDeniedCidrs,
+  ];
   return {
     apiVersion: "networking.k8s.io/v1",
     kind: "NetworkPolicy",
@@ -200,9 +218,7 @@ function buildUnrestrictedFloorPolicy(params: {
           ],
         },
         {
-          to: [
-            { ipBlock: { cidr: "0.0.0.0/0", except: FLOOR_DENIED_IPV4_CIDRS } },
-          ],
+          to: [{ ipBlock: { cidr: "0.0.0.0/0", except: deniedIpv4 } }],
         },
         {
           to: [{ ipBlock: { cidr: "::/0", except: FLOOR_DENIED_IPV6_CIDRS } }],
