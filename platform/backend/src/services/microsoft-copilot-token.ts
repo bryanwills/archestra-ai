@@ -8,8 +8,12 @@
  * access token used against https://graph.microsoft.com.
  *
  * The redemption sits in the LLM proxy hot path, so this manager caches
- * access tokens per refresh token (refreshing 60s before expiry) and
- * single-flights concurrent redemptions for the same token.
+ * access tokens per llm_provider_api_keys row id (refreshing 60s before
+ * expiry) and single-flights concurrent redemptions for the same key. Keying
+ * by the row id — not by (a digest of) the refresh token — keeps secret
+ * material out of cache keys entirely and keeps the cache slot stable while
+ * the underlying token rotates. Callers without a row id (key validation
+ * before the row exists, model listing) redeem directly, uncached.
  *
  * Unlike GitHub's OAuth tokens, Entra refresh tokens ROTATE: a redemption may
  * return a new refresh token. The manager keeps the newest one in memory
@@ -18,8 +22,13 @@
  * expiry, so a failed write-back degrades longevity (the ~90-day inactivity
  * window keeps sliding only if the stored token is refreshed), never
  * per-request correctness.
+ *
+ * Because the cache key is not derived from the credential, each entry tracks
+ * the refresh tokens it has seen (`knownRefreshTokens`). A caller presenting
+ * a token outside that lineage means the stored secret was replaced (e.g. the
+ * key row reconnected to a different account); the entry is dropped so the
+ * old credential's access token can never be served for the new one.
  */
-import { createHmac, randomBytes } from "node:crypto";
 import { isVaultReference } from "@archestra/shared";
 import { LRUCacheManager } from "@/cache-manager";
 import config from "@/config";
@@ -73,49 +82,63 @@ class MicrosoftCopilotTokenManager {
   async getAccessToken(params: {
     refreshToken: string;
     /**
-     * Id of the llm_provider_api_keys row holding the refresh token. When
-     * given, a rotated refresh token is persisted back to that key's secret;
-     * without it rotation is tracked in memory only (e.g. key validation
-     * before the row exists).
+     * Id of the llm_provider_api_keys row holding the refresh token — also
+     * the cache/single-flight key. When given, redemptions are cached and a
+     * rotated refresh token is persisted back to that key's secret. Without
+     * it (key validation before the row exists, model listing) every call
+     * redeems directly and a rotated token is discarded — Entra keeps the
+     * submitted token valid until its own expiry, so only the longevity
+     * refresh of the stored key is lost, never correctness.
      */
     providerApiKeyId?: string;
   }): Promise<string> {
     const { refreshToken, providerApiKeyId } = params;
-    const cacheKey = hashToken(refreshToken);
 
-    const cached = this.tokenCache.get(cacheKey);
+    if (!providerApiKeyId) {
+      const { accessToken } = await redeemWithEntra(refreshToken);
+      return accessToken;
+    }
+
+    let cached = this.tokenCache.get(providerApiKeyId);
+    if (cached && !cached.knownRefreshTokens.includes(refreshToken)) {
+      // The caller's token is outside this entry's lineage: the stored secret
+      // was replaced under the same key row. Serving the cached access token
+      // would answer as the OLD credential's identity — drop the entry and
+      // redeem with the caller's token instead.
+      this.tokenCache.delete(providerApiKeyId);
+      cached = undefined;
+    }
     if (cached && cached.expiresAtMs - REFRESH_BUFFER_MS > Date.now()) {
       return cached.accessToken;
     }
 
-    const inFlight = this.inFlightRedemptions.get(cacheKey);
+    const inFlight = this.inFlightRedemptions.get(providerApiKeyId);
     if (inFlight) {
       return inFlight;
     }
 
-    const redemption = this.redeemRefreshToken({
+    const redemption = this.redeemAndCache({
       refreshToken,
-      cacheKey,
       providerApiKeyId,
       // A stale cache entry may hold a newer rotated token than the caller's.
       latestRefreshToken: cached?.latestRefreshToken,
+      knownRefreshTokens: cached?.knownRefreshTokens ?? [],
     }).finally(() => {
-      this.inFlightRedemptions.delete(cacheKey);
+      this.inFlightRedemptions.delete(providerApiKeyId);
     });
-    this.inFlightRedemptions.set(cacheKey, redemption);
+    this.inFlightRedemptions.set(providerApiKeyId, redemption);
     return redemption;
   }
 
   /**
-   * Drops the cached access token for a refresh token. Called when Graph
+   * Drops the cached access token for a provider key. Called when Graph
    * rejects a cached access token (e.g. revoked early) so the next request
    * re-redeems. When `staleAccessToken` is given, only that exact token is
    * evicted — a concurrent 401 handler must not throw away a token another
    * request already refreshed.
    */
-  invalidate(refreshToken: string, staleAccessToken?: string): void {
-    const cacheKey = hashToken(refreshToken);
-    const cached = this.tokenCache.get(cacheKey);
+  invalidate(providerApiKeyId: string, staleAccessToken?: string): void {
+    const cached = this.tokenCache.get(providerApiKeyId);
     if (!cached) {
       return;
     }
@@ -125,75 +148,38 @@ class MicrosoftCopilotTokenManager {
     ) {
       return;
     }
-    // Keep the rotated refresh token alive across the eviction: re-inserting
-    // an already-expired entry preserves `latestRefreshToken` for the next
+    // Keep the rotated refresh token and lineage alive across the eviction:
+    // re-inserting an already-expired entry preserves them for the next
     // redemption while failing the freshness check above.
-    this.tokenCache.set(cacheKey, { ...cached, expiresAtMs: 0 });
+    this.tokenCache.set(providerApiKeyId, { ...cached, expiresAtMs: 0 });
   }
 
-  private async redeemRefreshToken(params: {
+  private async redeemAndCache(params: {
     refreshToken: string;
-    cacheKey: string;
-    providerApiKeyId?: string;
+    providerApiKeyId: string;
     latestRefreshToken?: string;
+    knownRefreshTokens: string[];
   }): Promise<string> {
-    const { refreshToken, cacheKey, providerApiKeyId, latestRefreshToken } =
-      params;
-    const { authBaseUrl, tenantId, clientId } = config.llm["microsoft-copilot"];
+    const {
+      refreshToken,
+      providerApiKeyId,
+      latestRefreshToken,
+      knownRefreshTokens,
+    } = params;
 
-    const response = await fetch(
-      `${authBaseUrl}/${tenantId}/oauth2/v2.0/token`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          grant_type: "refresh_token",
-          refresh_token: latestRefreshToken ?? refreshToken,
-          scope: MICROSOFT_COPILOT_OAUTH_SCOPES,
-        }),
-      },
-    );
+    const { accessToken, expiresAtMs, rotatedRefreshToken } =
+      await redeemWithEntra(latestRefreshToken ?? refreshToken);
 
-    if (!response.ok) {
-      const body = await response.text();
-      logger.warn(
-        { status: response.status, body: body.slice(0, 500) },
-        "[MicrosoftCopilot] refresh token redemption failed",
-      );
-      // Entra reports expired/revoked refresh tokens as 400 invalid_grant.
-      if (response.status === 400 || response.status === 401) {
-        throw new ApiError(
-          401,
-          "Microsoft sign-in has expired or been revoked. Reconnect your Microsoft account to keep using Microsoft Copilot.",
-        );
-      }
-      throw new ApiError(
-        502,
-        `Microsoft Copilot token redemption failed with status ${response.status}`,
-      );
-    }
-
-    const payload = (await response.json()) as {
-      access_token?: string;
-      expires_in?: number;
-      refresh_token?: string;
-    };
-    if (!payload.access_token || typeof payload.expires_in !== "number") {
-      throw new ApiError(
-        502,
-        "Microsoft Copilot token redemption returned an unexpected payload",
-      );
-    }
-
-    const expiresAtMs = Date.now() + payload.expires_in * 1000;
-    const rotatedRefreshToken = payload.refresh_token;
     this.tokenCache.set(
-      cacheKey,
+      providerApiKeyId,
       {
-        accessToken: payload.access_token,
+        accessToken,
         expiresAtMs,
         latestRefreshToken: rotatedRefreshToken ?? latestRefreshToken,
+        knownRefreshTokens: appendKnownRefreshTokens(knownRefreshTokens, [
+          refreshToken,
+          rotatedRefreshToken,
+        ]),
       },
       // Freshness is enforced via expiresAtMs above; the LRU entry outlives
       // the access token so `latestRefreshToken` is still around for the next
@@ -201,15 +187,11 @@ class MicrosoftCopilotTokenManager {
       Math.max(expiresAtMs - Date.now(), 0) + ROTATED_TOKEN_RETENTION_MS,
     );
 
-    if (
-      rotatedRefreshToken &&
-      rotatedRefreshToken !== refreshToken &&
-      providerApiKeyId
-    ) {
+    if (rotatedRefreshToken && rotatedRefreshToken !== refreshToken) {
       this.queuePersist(providerApiKeyId, rotatedRefreshToken);
     }
 
-    return payload.access_token;
+    return accessToken;
   }
 
   private queuePersist(providerApiKeyId: string, newRefreshToken: string) {
@@ -316,7 +298,10 @@ export function createMicrosoftCopilotFetch(params: {
       init?.body === undefined || typeof init.body === "string";
     if (response.status === 401 && bodyIsReplayable) {
       await response.body?.cancel();
-      microsoftCopilotTokenManager.invalidate(refreshToken, accessToken);
+      if (providerApiKeyId) {
+        // Without a key id nothing was cached — the retry below re-redeems.
+        microsoftCopilotTokenManager.invalidate(providerApiKeyId, accessToken);
+      }
       let freshAccessToken: string;
       try {
         freshAccessToken = await microsoftCopilotTokenManager.getAccessToken({
@@ -349,6 +334,12 @@ interface CachedAccessToken {
    * persistence to the stored key lags or fails.
    */
   latestRefreshToken?: string;
+  /**
+   * Refresh tokens known to belong to this key row's credential: every token
+   * a caller has presented plus every rotation Entra returned. A caller token
+   * outside this lineage signals a replaced credential (see getAccessToken).
+   */
+  knownRefreshTokens: string[];
 }
 
 /** Refresh this long before the access token's reported expiry. */
@@ -356,6 +347,31 @@ const REFRESH_BUFFER_MS = 60 * 1000;
 
 /** How long a cache entry outlives its access token (see set() call above). */
 const ROTATED_TOKEN_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Cap on `knownRefreshTokens`. Callers re-present the stored token on every
+ * redemption and each redemption re-appends it (most-recent last), so tokens
+ * still in active use never age out; only long-superseded rotations do.
+ */
+const KNOWN_REFRESH_TOKEN_LIMIT = 8;
+
+function appendKnownRefreshTokens(
+  existing: string[],
+  seen: Array<string | undefined>,
+): string[] {
+  const merged = [...existing];
+  for (const token of seen) {
+    if (!token) {
+      continue;
+    }
+    const alreadyAt = merged.indexOf(token);
+    if (alreadyAt !== -1) {
+      merged.splice(alreadyAt, 1);
+    }
+    merged.push(token);
+  }
+  return merged.slice(-KNOWN_REFRESH_TOKEN_LIMIT);
+}
 
 /**
  * Converts a token-redemption ApiError into an OpenAI-shaped error Response so
@@ -376,16 +392,62 @@ function redemptionErrorResponse(error: unknown): Response {
   throw error;
 }
 
-// Per-process random key for the cache-key HMAC below. Regenerated on each
-// boot — the cache is in-memory only, so a cold start on restart is fine.
-const TOKEN_CACHE_HMAC_KEY = randomBytes(32);
+/**
+ * Redeems an Entra refresh token for a Graph access token. Pure network call:
+ * caching, single-flighting, and rotation persistence live in the manager.
+ */
+async function redeemWithEntra(refreshToken: string): Promise<{
+  accessToken: string;
+  expiresAtMs: number;
+  rotatedRefreshToken?: string;
+}> {
+  const { authBaseUrl, tenantId, clientId } = config.llm["microsoft-copilot"];
 
-// Derives an in-memory cache key for the token LRU. It is never stored,
-// persisted, or compared against a stored hash, so a slow password KDF
-// (bcrypt/scrypt/argon2) would only add latency to every proxy request. HMAC
-// with a per-process key (rather than bare SHA-256) means an observer of cache
-// keys can't pre-compute lookups against known token formats.
-// codeql[js/insufficient-password-hash] Derives an in-memory cache key from a high-entropy OAuth refresh token, not a stored user-password hash.
-function hashToken(token: string): string {
-  return createHmac("sha256", TOKEN_CACHE_HMAC_KEY).update(token).digest("hex");
+  const response = await fetch(`${authBaseUrl}/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      scope: MICROSOFT_COPILOT_OAUTH_SCOPES,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    logger.warn(
+      { status: response.status, body: body.slice(0, 500) },
+      "[MicrosoftCopilot] refresh token redemption failed",
+    );
+    // Entra reports expired/revoked refresh tokens as 400 invalid_grant.
+    if (response.status === 400 || response.status === 401) {
+      throw new ApiError(
+        401,
+        "Microsoft sign-in has expired or been revoked. Reconnect your Microsoft account to keep using Microsoft Copilot.",
+      );
+    }
+    throw new ApiError(
+      502,
+      `Microsoft Copilot token redemption failed with status ${response.status}`,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    access_token?: string;
+    expires_in?: number;
+    refresh_token?: string;
+  };
+  if (!payload.access_token || typeof payload.expires_in !== "number") {
+    throw new ApiError(
+      502,
+      "Microsoft Copilot token redemption returned an unexpected payload",
+    );
+  }
+
+  return {
+    accessToken: payload.access_token,
+    expiresAtMs: Date.now() + payload.expires_in * 1000,
+    rotatedRefreshToken: payload.refresh_token,
+  };
 }

@@ -25,13 +25,20 @@ const secretManagerMock = vi.mocked(secretManager);
 const getSecretValueMock = vi.mocked(getSecretValueForLlmProviderApiKey);
 
 /**
- * The token manager is a singleton with an internal cache, so every test uses
- * a unique refresh token to stay isolated from other tests' cache entries.
+ * The token manager is a singleton with an internal cache keyed by provider
+ * key id, so every test uses unique key ids (and refresh tokens) to stay
+ * isolated from other tests' cache entries.
  */
 let tokenCounter = 0;
 function uniqueRefreshToken(): string {
   tokenCounter += 1;
   return `entra_rt_${Date.now()}_${tokenCounter}`;
+}
+
+let keyIdCounter = 0;
+function uniqueKeyId(): string {
+  keyIdCounter += 1;
+  return `key_${Date.now()}_${keyIdCounter}`;
 }
 
 function redemptionResponse(params?: {
@@ -85,19 +92,43 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
   test("caches the access token until expiry and reuses it", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     const fetchMock = vi
       .fn()
       .mockResolvedValue(redemptionResponse({ refreshToken: null }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await microsoftCopilotTokenManager.getAccessToken({ refreshToken });
-    await microsoftCopilotTokenManager.getAccessToken({ refreshToken });
+    await microsoftCopilotTokenManager.getAccessToken({
+      refreshToken,
+      providerApiKeyId,
+    });
+    await microsoftCopilotTokenManager.getAccessToken({
+      refreshToken,
+      providerApiKeyId,
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("single-flights concurrent redemptions for the same token", async () => {
+  test("does not cache redemptions made without a provider key id", async () => {
     const refreshToken = uniqueRefreshToken();
+    // A fresh Response per call — both redemptions read the body.
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        redemptionResponse({ refreshToken: null }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await microsoftCopilotTokenManager.getAccessToken({ refreshToken });
+    await microsoftCopilotTokenManager.getAccessToken({ refreshToken });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("single-flights concurrent redemptions for the same provider key", async () => {
+    const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     let resolveRedemption: (response: Response) => void = () => {};
     const fetchMock = vi.fn().mockImplementation(
       () =>
@@ -108,8 +139,14 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const [first, second] = [
-      microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
-      microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
+      microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ];
     resolveRedemption(redemptionResponse({ refreshToken: null }));
 
@@ -120,6 +157,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
   test("uses the rotated refresh token on the next redemption", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -135,9 +173,13 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    await microsoftCopilotTokenManager.getAccessToken({ refreshToken });
+    await microsoftCopilotTokenManager.getAccessToken({
+      refreshToken,
+      providerApiKeyId,
+    });
     const accessToken = await microsoftCopilotTokenManager.getAccessToken({
       refreshToken,
+      providerApiKeyId,
     });
 
     expect(accessToken).toBe("second");
@@ -145,8 +187,43 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
     expect(secondBody.get("refresh_token")).toBe("rotated-rt");
   });
 
+  test("evicts the cached entry when the stored credential is replaced", async () => {
+    const providerApiKeyId = uniqueKeyId();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        redemptionResponse({ accessToken: "old-account", refreshToken: null }),
+      )
+      .mockResolvedValueOnce(
+        redemptionResponse({ accessToken: "new-account", refreshToken: null }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const originalToken = uniqueRefreshToken();
+    expect(
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken: originalToken,
+        providerApiKeyId,
+      }),
+    ).toBe("old-account");
+
+    // Same key row, brand-new token (outside the rotation lineage): the
+    // cached access token belongs to the old credential and must not be
+    // served for the new one.
+    const replacementToken = uniqueRefreshToken();
+    expect(
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken: replacementToken,
+        providerApiKeyId,
+      }),
+    ).toBe("new-account");
+    const secondBody = fetchMock.mock.calls[1][1].body as URLSearchParams;
+    expect(secondBody.get("refresh_token")).toBe(replacementToken);
+  });
+
   test("persists a rotated refresh token back to the stored key", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     vi.stubGlobal(
       "fetch",
       vi
@@ -164,7 +241,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
     await microsoftCopilotTokenManager.getAccessToken({
       refreshToken,
-      providerApiKeyId: "key-1",
+      providerApiKeyId,
     });
 
     await vi.waitFor(() => {
@@ -172,7 +249,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
         apiKey: "rotated-rt",
       });
     });
-    expect(findByIdMock).toHaveBeenCalledWith("key-1");
+    expect(findByIdMock).toHaveBeenCalledWith(providerApiKeyId);
   });
 
   test("skips persistence for vault-referenced keys", async () => {
@@ -194,7 +271,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
     await microsoftCopilotTokenManager.getAccessToken({
       refreshToken,
-      providerApiKeyId: "key-1",
+      providerApiKeyId: uniqueKeyId(),
     });
 
     await vi.waitFor(() => {
@@ -215,7 +292,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
     const accessToken = await microsoftCopilotTokenManager.getAccessToken({
       refreshToken,
-      providerApiKeyId: "key-1",
+      providerApiKeyId: uniqueKeyId(),
     });
 
     expect(accessToken).toBe("graph-access-token");
@@ -257,6 +334,7 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
 
   test("a failed redemption does not poison subsequent attempts", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("boom", { status: 500 }))
@@ -264,17 +342,22 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ).rejects.toThrow(ApiError);
 
     const accessToken = await microsoftCopilotTokenManager.getAccessToken({
       refreshToken,
+      providerApiKeyId,
     });
     expect(accessToken).toBe("graph-access-token");
   });
 
   test("invalidate() with a stale access token keeps an already-refreshed entry", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -283,18 +366,25 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(
-      await microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ).toBe("fresh");
     // A concurrent 401 handler that used an older token must not evict it.
-    microsoftCopilotTokenManager.invalidate(refreshToken, "stale");
+    microsoftCopilotTokenManager.invalidate(providerApiKeyId, "stale");
     expect(
-      await microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ).toBe("fresh");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("invalidate() drops the cached access token but keeps the rotated refresh token", async () => {
     const refreshToken = uniqueRefreshToken();
+    const providerApiKeyId = uniqueKeyId();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -306,11 +396,17 @@ describe("microsoftCopilotTokenManager.getAccessToken", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(
-      await microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ).toBe("first");
-    microsoftCopilotTokenManager.invalidate(refreshToken);
+    microsoftCopilotTokenManager.invalidate(providerApiKeyId);
     expect(
-      await microsoftCopilotTokenManager.getAccessToken({ refreshToken }),
+      await microsoftCopilotTokenManager.getAccessToken({
+        refreshToken,
+        providerApiKeyId,
+      }),
     ).toBe("second");
     // The re-redemption after invalidation still uses the rotated token.
     const secondBody = fetchMock.mock.calls[1][1].body as URLSearchParams;
@@ -363,6 +459,7 @@ describe("createMicrosoftCopilotFetch", () => {
 
     const graphFetch = createMicrosoftCopilotFetch({
       refreshToken,
+      providerApiKeyId: uniqueKeyId(),
       innerFetch,
     });
     const response = await graphFetch(
