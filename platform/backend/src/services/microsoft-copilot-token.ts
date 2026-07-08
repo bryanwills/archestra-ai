@@ -385,6 +385,7 @@ const TOKEN_CACHE_HMAC_KEY = randomBytes(32);
 // (bcrypt/scrypt/argon2) would only add latency to every proxy request. HMAC
 // with a per-process key (rather than bare SHA-256) means an observer of cache
 // keys can't pre-compute lookups against known token formats.
+// codeql[js/insufficient-password-hash] Derives an in-memory cache key from a high-entropy OAuth refresh token, not a stored user-password hash.
 function hashToken(token: string): string {
   return createHmac("sha256", TOKEN_CACHE_HMAC_KEY).update(token).digest("hex");
 }
