@@ -43844,6 +43844,100 @@ export type TriggerPermissionSyncResponses = {
 
 export type TriggerPermissionSyncResponse = TriggerPermissionSyncResponses[keyof TriggerPermissionSyncResponses];
 
+export type GetPermissionSyncCoverageData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connectors/{id}/permission-coverage';
+};
+
+export type GetPermissionSyncCoverageErrors = {
+    /**
+     * Default Response
+     */
+    400: {
+        error: {
+            message: string;
+            type: 'api_validation_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    401: {
+        error: {
+            message: string;
+            type: 'api_authentication_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    403: {
+        error: {
+            message: string;
+            type: 'api_authorization_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    404: {
+        error: {
+            message: string;
+            type: 'api_not_found_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    409: {
+        error: {
+            message: string;
+            type: 'api_conflict_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    500: {
+        error: {
+            message: string;
+            type: 'api_internal_server_error';
+            internal_code?: string;
+        };
+    };
+};
+
+export type GetPermissionSyncCoverageError = GetPermissionSyncCoverageErrors[keyof GetPermissionSyncCoverageErrors];
+
+export type GetPermissionSyncCoverageResponses = {
+    /**
+     * Default Response
+     */
+    200: {
+        totalDocuments: number;
+        failClosedDocuments: number;
+        /**
+         * A permission-sync pass is currently running.
+         */
+        permissionSyncRunning: boolean;
+        /**
+         * Next scheduled pass per the effective global cron, if valid.
+         */
+        nextScheduledAt: string | null;
+    };
+};
+
+export type GetPermissionSyncCoverageResponse = GetPermissionSyncCoverageResponses[keyof GetPermissionSyncCoverageResponses];
+
 export type ForceResyncConnectorData = {
     body?: never;
     path: {
@@ -44383,6 +44477,16 @@ export type GetConnectorRunsResponses = {
             checkpoint: string | number | boolean | null | {
                 [key: string]: unknown;
             } | Array<unknown> | null;
+            stats: {
+                totalDocs: number;
+                docsScanned: number;
+                aclsChanged: number;
+                chunksRewritten: number;
+                failClosed: number;
+                groupsSynced: number;
+                membershipsUpserted: number;
+                contentSyncActiveDuringRun: boolean;
+            } | null;
             createdAt: string;
         }>;
         pagination: {
@@ -44496,6 +44600,16 @@ export type GetConnectorRunResponses = {
         checkpoint: string | number | boolean | null | {
             [key: string]: unknown;
         } | Array<unknown> | null;
+        stats: {
+            totalDocs: number;
+            docsScanned: number;
+            aclsChanged: number;
+            chunksRewritten: number;
+            failClosed: number;
+            groupsSynced: number;
+            membershipsUpserted: number;
+            contentSyncActiveDuringRun: boolean;
+        } | null;
         createdAt: string;
     };
 };

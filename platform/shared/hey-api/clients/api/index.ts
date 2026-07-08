@@ -247,6 +247,7 @@ export {
   getOrganizationMember,
   getOrganizationMembers,
   getOverviewStatistics,
+  getPermissionSyncCoverage,
   getProject,
   getProjectConversations,
   getProjectFiles,
