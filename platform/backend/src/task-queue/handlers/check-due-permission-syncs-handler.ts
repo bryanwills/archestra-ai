@@ -1,6 +1,6 @@
-import { Cron } from "croner";
 import config from "@/config";
 import { getConnector } from "@/knowledge-base/connectors/registry";
+import { nextPermissionSyncDueAt } from "@/knowledge-base/permission-sync-schedule";
 import logger from "@/logging";
 import {
   ConnectorRunModel,
@@ -38,16 +38,23 @@ export async function handleCheckDuePermissionSyncs(): Promise<void> {
       const schedule = scheduleByOrg.get(connector.organizationId);
       if (!schedule) continue;
 
-      try {
-        const cron = new Cron(schedule);
-        const nextRun = cron.nextRun(
-          connector.lastPermissionSyncAt ?? new Date(0),
+      // Cadence semantics: due one schedule interval after the last pass
+      // (manual or scheduled), not at the next wall-clock cron slot — a
+      // manual pass pushes the next scheduled one out instead of
+      // double-running minutes later.
+      const dueAt = nextPermissionSyncDueAt({
+        schedule,
+        lastPermissionSyncAt: connector.lastPermissionSyncAt,
+      });
+      if (dueAt === null) {
+        logger.warn(
+          { connectorId: connector.id, schedule },
+          "Failed to evaluate permission-sync schedule",
         );
-        if (
-          nextRun &&
-          nextRun <= new Date() &&
-          !activeConnectorIds.has(connector.id)
-        ) {
+        continue;
+      }
+      if (dueAt <= new Date() && !activeConnectorIds.has(connector.id)) {
+        try {
           await taskQueueService.enqueue({
             taskType: "permission_sync",
             payload: { connectorId: connector.id },
@@ -59,16 +66,17 @@ export async function handleCheckDuePermissionSyncs(): Promise<void> {
             },
             "Enqueued scheduled permission sync",
           );
+        } catch (error) {
+          // One connector's enqueue failure must not starve the rest of the
+          // loop (or the reaper below).
+          logger.warn(
+            {
+              connectorId: connector.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "Failed to enqueue scheduled permission sync",
+          );
         }
-      } catch (error) {
-        logger.warn(
-          {
-            connectorId: connector.id,
-            schedule,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          "Failed to evaluate permission-sync schedule",
-        );
       }
     }
   }

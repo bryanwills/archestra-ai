@@ -5,7 +5,6 @@ import {
   PaginationQuerySchema,
   RouteId,
 } from "@archestra/shared";
-import { Cron } from "croner";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { userHasPermission } from "@/auth/utils";
@@ -19,6 +18,7 @@ import {
 import { buildGroupToken } from "@/knowledge-base/acl-tokens";
 import { resolveConnectorCredentials } from "@/knowledge-base/connector-credentials";
 import { getConnector } from "@/knowledge-base/connectors/registry";
+import { nextPermissionSyncDueAt } from "@/knowledge-base/permission-sync-schedule";
 import logger from "@/logging";
 import {
   AgentConnectorAssignmentModel,
@@ -1197,17 +1197,16 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         ]);
       const permissionSyncRunning = hasRunningRun || hasQueuedTask;
 
-      // Effective schedule: org override, else the env default. An invalid
-      // cron just yields no next-run rather than failing the endpoint.
-      let nextScheduledAt: string | null = null;
-      try {
-        const schedule =
-          organization?.permissionSyncSchedule ??
-          config.kb.permissionSyncScheduleDefault;
-        nextScheduledAt = new Cron(schedule).nextRun()?.toISOString() ?? null;
-      } catch {
-        // ignore — no next-run for an unparsable schedule
-      }
+      // Effective schedule: org override, else the env default. Cadence
+      // semantics (one interval after the last pass), matching the scheduler;
+      // an invalid cron yields no next-run rather than failing the endpoint.
+      const nextScheduledAt =
+        nextPermissionSyncDueAt({
+          schedule:
+            organization?.permissionSyncSchedule ??
+            config.kb.permissionSyncScheduleDefault,
+          lastPermissionSyncAt: connector.lastPermissionSyncAt,
+        })?.toISOString() ?? null;
 
       return reply.send({
         totalDocuments: coverage.totalDocuments,

@@ -173,6 +173,57 @@ describe("handleCheckDuePermissionSyncs", () => {
     expect(await countPermissionSyncTasks(connector.id)).toBe(0);
   });
 
+  test("does not double-run right after a manual pass: due one interval AFTER the last run, not at the next wall-clock slot", async ({
+    makeOrganization,
+    makeKnowledgeBase,
+    makeKnowledgeBaseConnector,
+  }) => {
+    const org = await makeOrganization();
+    await OrganizationModel.patch(org.id, {
+      permissionSyncSchedule: "*/30 * * * *",
+    });
+    const kb = await makeKnowledgeBase(org.id);
+    const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+      visibility: "auto-sync-permissions",
+      connectorType: "github",
+      enabled: true,
+    });
+    // A manual pass 16 minutes ago. Under wall-clock cron slots a :00/:30
+    // boundary may already have passed since then (the double-run bug);
+    // under cadence semantics the next pass is due 30 minutes after it.
+    await KnowledgeBaseConnectorModel.update(connector.id, {
+      lastPermissionSyncAt: new Date(Date.now() - 16 * 60 * 1000),
+    });
+
+    await handleCheckDuePermissionSyncs();
+
+    expect(await countPermissionSyncTasks(connector.id)).toBe(0);
+  });
+
+  test("enqueues once a full schedule interval has elapsed since the last pass", async ({
+    makeOrganization,
+    makeKnowledgeBase,
+    makeKnowledgeBaseConnector,
+  }) => {
+    const org = await makeOrganization();
+    await OrganizationModel.patch(org.id, {
+      permissionSyncSchedule: "*/30 * * * *",
+    });
+    const kb = await makeKnowledgeBase(org.id);
+    const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+      visibility: "auto-sync-permissions",
+      connectorType: "github",
+      enabled: true,
+    });
+    await KnowledgeBaseConnectorModel.update(connector.id, {
+      lastPermissionSyncAt: new Date(Date.now() - 31 * 60 * 1000),
+    });
+
+    await handleCheckDuePermissionSyncs();
+
+    expect(await countPermissionSyncTasks(connector.id)).toBe(1);
+  });
+
   test("de-duplicates: does not enqueue a second permission_sync when one is already pending", async ({
     makeOrganization,
     makeKnowledgeBase,
