@@ -13,10 +13,11 @@ export async function handlePermissionSync(
   }
 
   const connector = await KnowledgeBaseConnectorModel.findById(connectorId);
-  const { logger: capturingLogger } = createCapturingLogger();
+  const { logger: capturingLogger, getLogOutput } = createCapturingLogger();
 
   const result = await permissionSyncService.executePass(connectorId, {
     logger: capturingLogger,
+    getLogOutput,
   });
 
   // A partial run was interrupted mid-generation; re-enqueue so a fresh run
