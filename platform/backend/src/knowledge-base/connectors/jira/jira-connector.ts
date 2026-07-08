@@ -64,6 +64,8 @@ export class JiraConnector extends BaseConnector {
   private securitySchemeCache = new Map<string, number | null>();
   private securityLevelCache = new Map<string, DocumentPermissions>();
   private accountEmailCache = new Map<string, string | null>();
+  /** applicationRole key (or "" = any logged-in user) → its site-access group names. */
+  private applicationRoleGroupsCache = new Map<string, string[]>();
 
   async validateConfig(
     config: Record<string, unknown>,
@@ -414,10 +416,23 @@ export class JiraConnector extends BaseConnector {
       // biome-ignore lint/suspicious/noExplicitAny: SDK group shape
       const groups: any[] = result.values ?? [];
       for (const group of groups) {
-        const memberEmails = await this.resolveGroupMemberEmails(
-          client,
-          group.name,
-        );
+        // Per-group failure isolation: hidden system groups (e.g.
+        // `atlassian-addons`) appear in the bulk listing but 404 on member
+        // lookup — one such group must not abort the whole enumeration (which
+        // would leave the snapshot empty and every group grant unresolvable).
+        // A failed group yields no members: fail-closed for that group only.
+        let memberEmails: string[] = [];
+        try {
+          memberEmails = await this.resolveGroupMemberEmails(client, {
+            name: group.name,
+            groupId: group.groupId,
+          });
+        } catch (error) {
+          this.log.warn(
+            { group: group.name, error: extractErrorMessage(error) },
+            "Could not resolve Jira group members; skipping group (its grants stay fail-closed)",
+          );
+        }
         yield { groupId: group.name, memberEmails, cursor: group.name };
       }
       startAt += groups.length;
@@ -623,9 +638,24 @@ export class JiraConnector extends BaseConnector {
     const identifier: string | undefined = holder.value ?? holder.parameter;
     switch (holder.type) {
       case "anyone":
-      case "applicationRole":
+        // "Anyone on the web" — genuinely anonymous access, so org-wide.
         acc.isPublic = true;
         break;
+      case "applicationRole": {
+        // "Any logged-in user" of the SITE — a specific, revocable set (the
+        // application's access groups, e.g. `jira-users-<site>`), NOT the
+        // whole Archestra org. Mapping this to `org:*` would over-grant: a
+        // user removed from the site's access group upstream would keep
+        // seeing the documents. Resolve to the role's group names instead;
+        // membership then flows through the group snapshot like any group
+        // grant (revocation = next pass sweeps their membership row).
+        const groups = await this.resolveApplicationRoleGroups(
+          client,
+          holder.parameter ?? holder.value,
+        );
+        acc.groups.push(...groups);
+        break;
+      }
       case "reporter":
         acc.includeReporter = true;
         break;
@@ -703,6 +733,60 @@ export class JiraConnector extends BaseConnector {
   }
 
   /**
+   * Resolve an `applicationRole` grant ("any logged-in user" of the site) to
+   * the role's site-access group NAMES (e.g. `jira-users-<site>`), cached per
+   * pass. An absent key means "any application" — the union across all roles.
+   * On failure the grant resolves to no groups (fail-closed, logged) rather
+   * than over-granting.
+   */
+  private async resolveApplicationRoleGroups(
+    // biome-ignore lint/suspicious/noExplicitAny: jira.js client
+    client: any,
+    applicationKey: string | undefined,
+  ): Promise<string[]> {
+    const cacheKey = applicationKey ?? "";
+    const cached = this.applicationRoleGroupsCache.get(cacheKey);
+    if (cached) return cached;
+
+    let groupNames: string[] = [];
+    try {
+      await this.rateLimit();
+      // biome-ignore lint/suspicious/noExplicitAny: SDK role shape
+      const roles: any[] = applicationKey
+        ? [
+            await client.applicationRoles.getApplicationRole({
+              key: applicationKey,
+            }),
+          ]
+        : ((await client.applicationRoles.getAllApplicationRoles()) ?? []);
+      const names = new Set<string>();
+      for (const role of roles) {
+        // Prefer groupDetails (stable name+id pairs); the legacy `groups`
+        // field carries names on Server/DC and is the fallback.
+        // biome-ignore lint/suspicious/noExplicitAny: SDK group shape
+        const details: any[] = role?.groupDetails ?? [];
+        if (details.length > 0) {
+          for (const group of details) {
+            if (group?.name) names.add(group.name);
+          }
+        } else {
+          for (const name of role?.groups ?? []) {
+            if (typeof name === "string" && name) names.add(name);
+          }
+        }
+      }
+      groupNames = [...names];
+    } catch (error) {
+      this.log.warn(
+        { applicationKey, error: extractErrorMessage(error) },
+        "Could not resolve Jira application-role groups; the grant stays fail-closed",
+      );
+    }
+    this.applicationRoleGroupsCache.set(cacheKey, groupNames);
+    return groupNames;
+  }
+
+  /**
    * Meter upstream principals dropped because their email could not be resolved
    * (Cloud email privacy). Fail-closed under-grant — surfaced so admins see the
    * coverage gap rather than silently narrowing an audience.
@@ -723,14 +807,19 @@ export class JiraConnector extends BaseConnector {
   private async resolveGroupMemberEmails(
     // biome-ignore lint/suspicious/noExplicitAny: jira.js client
     client: any,
-    groupname: string,
+    group: { name: string; groupId?: string },
   ): Promise<string[]> {
     const emails: string[] = [];
     let startAt = 0;
     for (;;) {
       await this.rateLimit();
+      // Prefer the immutable groupId for the member lookup (names are
+      // rename-able and some name lookups 404); the NAME stays the snapshot /
+      // token key — see the group data contract.
       const result = await client.groups.getUsersFromGroup({
-        groupname,
+        ...(group.groupId
+          ? { groupId: group.groupId }
+          : { groupname: group.name }),
         startAt,
         maxResults: 50,
       });
@@ -831,11 +920,22 @@ function buildJiraMiddlewares(log: pino.Logger) {
     onError: (error: unknown) => {
       // biome-ignore lint/suspicious/noExplicitAny: Axios error shape
       const err = error as any;
+      // jira.js wraps axios errors into HttpException: the original axios error
+      // (with its request config) is at `cause`, and `response` is a plain
+      // {status, data, ...} object whose `data` carries Jira's error body — the
+      // actionable detail ("errorMessages"). Surface both.
+      const requestConfig =
+        err?.config ?? err?.cause?.config ?? err?.response?.config;
+      const detail = err?.response?.data;
       log.debug(
         {
           status: err?.response?.status,
-          method: err?.config?.method?.toUpperCase(),
-          url: err?.config?.url,
+          method: requestConfig?.method?.toUpperCase(),
+          url: requestConfig?.url,
+          detail:
+            detail === undefined
+              ? undefined
+              : JSON.stringify(detail).slice(0, 300),
           error: err?.message ?? String(error),
         },
         "HTTP error",

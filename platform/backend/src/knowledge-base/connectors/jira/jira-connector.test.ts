@@ -1064,6 +1064,132 @@ describe("JiraConnector", () => {
       ]);
     });
 
+    test("an applicationRole grant resolves to the role's site-access groups, NOT org-wide", async () => {
+      // "Any logged-in user" of the site is a specific, revocable set — the
+      // application's access groups — not the whole Archestra org. Mapping it
+      // to org:* would keep granting users removed from the site upstream.
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-7",
+            fields: { project: { key: "PROJ" }, security: null },
+          },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: { type: "applicationRole", parameter: "jira-software" },
+              },
+            ],
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/applicationrole/jira-software`, () =>
+          HttpResponse.json({
+            key: "jira-software",
+            groupDetails: [
+              { name: "jira-users-site", groupId: "uuid-1" },
+              { name: "jira-software-users", groupId: "uuid-2" },
+            ],
+          }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: [],
+        groups: ["jira-users-site", "jira-software-users"],
+      });
+    });
+
+    test("an applicationRole grant with no key unions ALL application roles' groups", async () => {
+      // An empty parameter means "any logged-in user" regardless of product.
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-8",
+            fields: { project: { key: "PROJ" }, security: null },
+          },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: { type: "applicationRole" },
+              },
+            ],
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/applicationrole`, () =>
+          HttpResponse.json([
+            {
+              key: "jira-software",
+              groupDetails: [{ name: "jira-users-site" }],
+            },
+            // Legacy `groups` (names) used when groupDetails is absent.
+            { key: "jira-core", groups: ["jira-core-users"] },
+          ]),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: [],
+        groups: ["jira-users-site", "jira-core-users"],
+      });
+    });
+
+    test("an applicationRole grant fail-closes when the role lookup fails", async () => {
+      server.use(
+        searchHandler([
+          {
+            key: "PROJ-6",
+            fields: { project: { key: "PROJ" }, security: null },
+          },
+        ]),
+        http.get(`${CLOUD_HOST}/rest/api/3/project/PROJ/permissionscheme`, () =>
+          HttpResponse.json({
+            id: 10,
+            permissions: [
+              {
+                permission: "BROWSE_PROJECTS",
+                holder: { type: "applicationRole", parameter: "jira-software" },
+              },
+            ],
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/applicationrole/jira-software`, () =>
+          HttpResponse.json({ errorMessages: ["forbidden"] }, { status: 500 }),
+        ),
+      );
+
+      const yields = await collect(
+        connector.syncDocumentPermissions?.(syncParams) ??
+          (async function* () {})(),
+      );
+
+      // Under-grant, never over-grant: no org:*, no groups.
+      expect(yields[0].permissions).toEqual({
+        isPublic: false,
+        users: [],
+        groups: [],
+      });
+    });
+
     test("a Cloud group grant uses the group NAME (parameter), not the UUID (value)", async () => {
       // On Jira Cloud a group holder's `value` is the group UUID and
       // `parameter` is the name; syncGroups keys membership by NAME, so the
@@ -1195,6 +1321,86 @@ describe("JiraConnector", () => {
       );
 
       expect(yields).toEqual([
+        {
+          groupId: "devs",
+          memberEmails: ["alice@example.com"],
+          cursor: "devs",
+        },
+      ]);
+    });
+
+    test("syncGroups uses groupId for the member lookup and keeps NAME as the token key", async () => {
+      // The member lookup must go by immutable groupId (some names 404), but
+      // the yielded groupId — the token / snapshot key — must stay the NAME to
+      // byte-match document group tokens.
+      let memberQuery: URLSearchParams | undefined;
+      server.use(
+        http.get(`${CLOUD_HOST}/rest/api/3/group/bulk`, () =>
+          HttpResponse.json({
+            values: [{ name: "devs", groupId: "uuid-123" }],
+            total: 1,
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/group/member`, ({ request }) => {
+          memberQuery = new URL(request.url).searchParams;
+          return HttpResponse.json({
+            values: [{ emailAddress: "alice@example.com" }],
+            total: 1,
+          });
+        }),
+      );
+
+      const yields = await collect(
+        connector.syncGroups?.(syncParams) ?? (async function* () {})(),
+      );
+
+      expect(memberQuery?.get("groupId")).toBe("uuid-123");
+      expect(memberQuery?.get("groupname")).toBeNull();
+      expect(yields[0].groupId).toBe("devs");
+    });
+
+    test("syncGroups skips a group whose member lookup fails instead of aborting the enumeration", async () => {
+      // Hidden system groups (`atlassian-addons`) are listed by group/bulk but
+      // 404 on member lookup; one bad group must not leave the whole snapshot
+      // empty (which silently fail-closes every group grant).
+      server.use(
+        http.get(`${CLOUD_HOST}/rest/api/3/group/bulk`, () =>
+          HttpResponse.json({
+            values: [{ name: "atlassian-addons" }, { name: "devs" }],
+            total: 2,
+          }),
+        ),
+        http.get(`${CLOUD_HOST}/rest/api/3/group/member`, ({ request }) => {
+          const groupname = new URL(request.url).searchParams.get("groupname");
+          if (groupname === "atlassian-addons") {
+            return HttpResponse.json(
+              {
+                errorMessages: [
+                  "The group named 'atlassian-addons' does not exist",
+                ],
+              },
+              { status: 404 },
+            );
+          }
+          return HttpResponse.json({
+            values: [{ emailAddress: "alice@example.com" }],
+            total: 1,
+          });
+        }),
+      );
+
+      const yields = await collect(
+        connector.syncGroups?.(syncParams) ?? (async function* () {})(),
+      );
+
+      // The failed group yields empty (fail-closed for it alone); the healthy
+      // group is still enumerated.
+      expect(yields).toEqual([
+        {
+          groupId: "atlassian-addons",
+          memberEmails: [],
+          cursor: "atlassian-addons",
+        },
         {
           groupId: "devs",
           memberEmails: ["alice@example.com"],
