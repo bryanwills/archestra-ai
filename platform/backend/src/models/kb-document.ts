@@ -424,6 +424,32 @@ class KbDocumentModel {
   // ===== Permission-sync pass (auto-sync-permissions connectors) =====
 
   /**
+   * Live ACL coverage for a connector: how many documents exist and how many
+   * are still fail-closed (`acl = []` — awaiting a permission-sync pass, or
+   * swept because they are no longer visible upstream). This is the number an
+   * admin reads to know whether "everything ingested is reconciled right now",
+   * instead of inferring it from run history.
+   */
+  static async getAclCoverageByConnector(connectorId: string): Promise<{
+    totalDocuments: number;
+    failClosedDocuments: number;
+  }> {
+    const { rows } = await db.execute<{
+      total: number;
+      fail_closed: number;
+    }>(sql`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE acl = '[]'::jsonb)::int AS fail_closed
+      FROM ${schema.kbDocumentsTable}
+      WHERE connector_id = ${connectorId}
+    `);
+    return {
+      totalDocuments: Number(rows[0]?.total ?? 0),
+      failClosedDocuments: Number(rows[0]?.fail_closed ?? 0),
+    };
+  }
+
+  /**
    * Lean projection of the current per-document ACL state for a batch of source
    * ids, used by the permission-sync pass to diff without loading document
    * content. O(batch) memory.

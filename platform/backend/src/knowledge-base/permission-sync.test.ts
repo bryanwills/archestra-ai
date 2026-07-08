@@ -19,6 +19,7 @@ import { and, desc, eq } from "drizzle-orm";
 import config from "@/config";
 import db, { schema } from "@/database";
 import { permissionSyncService } from "@/knowledge-base/permission-sync";
+import { ConnectorRunModel } from "@/models";
 import { beforeEach, describe, expect, test } from "@/test";
 
 type FakeDoc = {
@@ -159,6 +160,97 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
         .from(schema.connectorRunsTable)
         .where(eq(schema.connectorRunsTable.id, runId))
     )[0]?.checkpoint as { generation: number } | null | undefined;
+
+  test("persists family-relevant run stats (scanned/changed/fail-closed/groups) on the run row", async ({
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const connector = await seedConnector(org.id);
+    const a = await seedDoc({
+      organizationId: org.id,
+      connectorId: connector.id,
+      sourceId: "a",
+      acl: [],
+    });
+    // B exists but is no longer enumerated upstream → swept fail-closed.
+    await seedDoc({
+      organizationId: org.id,
+      connectorId: connector.id,
+      sourceId: "b",
+      acl: ["user_email:old@example.com"],
+    });
+    vi.mocked(getConnector).mockReturnValue(
+      makeFakeConnector({
+        documents: [
+          { sourceId: "a", permissions: { users: ["alice@example.com"] } },
+        ],
+        groups: [
+          {
+            groupId: "g1",
+            memberEmails: ["alice@example.com", "bob@example.com"],
+          },
+        ],
+      }),
+    );
+
+    const result = await permissionSyncService.executePass(connector.id);
+    expect(result.status).toBe("success");
+    expect(await docAcl(a.id)).toEqual(["user_email:alice@example.com"]);
+
+    const [run] = await db
+      .select({ stats: schema.connectorRunsTable.stats })
+      .from(schema.connectorRunsTable)
+      .where(eq(schema.connectorRunsTable.id, result.runId));
+    expect(run?.stats).toEqual({
+      totalDocs: 2,
+      docsScanned: 1,
+      aclsChanged: 1,
+      chunksRewritten: 1,
+      failClosed: 1,
+      groupsSynced: 1,
+      membershipsUpserted: 2,
+      contentSyncActiveDuringRun: false,
+    });
+  });
+
+  test("stats flag contentSyncActiveDuringRun when a content run overlaps the pass", async ({
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const connector = await seedConnector(org.id);
+    await seedDoc({
+      organizationId: org.id,
+      connectorId: connector.id,
+      sourceId: "a",
+      acl: [],
+    });
+    // Simulate a live content backfill: a `content` run holding its lease.
+    const claim = await ConnectorRunModel.claim({
+      connectorId: connector.id,
+      owner: "content-worker",
+      leaseTtlSeconds: 300,
+      runType: "content",
+    });
+    expect(claim.outcome).toBe("claimed");
+
+    vi.mocked(getConnector).mockReturnValue(
+      makeFakeConnector({
+        documents: [
+          { sourceId: "a", permissions: { users: ["alice@example.com"] } },
+        ],
+      }),
+    );
+
+    const result = await permissionSyncService.executePass(connector.id);
+    expect(result.status).toBe("success");
+
+    const [run] = await db
+      .select({ stats: schema.connectorRunsTable.stats })
+      .from(schema.connectorRunsTable)
+      .where(eq(schema.connectorRunsTable.id, result.runId));
+    // The badge signal: this success only covered what was ingested so far.
+    expect(run?.stats?.contentSyncActiveDuringRun).toBe(true);
+  });
 
   test("applies an access-shrink diff without re-embedding, and stamps unchanged docs", async ({
     makeOrganization,

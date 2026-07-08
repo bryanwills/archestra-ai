@@ -5,9 +5,11 @@ import {
   PaginationQuerySchema,
   RouteId,
 } from "@archestra/shared";
+import { Cron } from "croner";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { userHasPermission } from "@/auth/utils";
+import config from "@/config";
 import { enterpriseTier } from "@/enterprise-tier";
 import {
   didKnowledgeSourceAclInputsChange,
@@ -26,6 +28,7 @@ import {
   KbDocumentModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
+  OrganizationModel,
   TaskModel,
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
@@ -1139,6 +1142,73 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
       });
 
       return reply.send({ taskId, status: "enqueued" });
+    },
+  );
+
+  fastify.get(
+    "/api/connectors/:id/permission-coverage",
+    {
+      schema: {
+        operationId: RouteId.GetPermissionSyncCoverage,
+        description:
+          "Live ACL coverage for an auto-sync-permissions connector: how many ingested documents are tagged vs still fail-closed (awaiting a permission-sync pass)",
+        tags: ["Connectors"],
+        params: z.object({ id: z.uuid() }),
+        response: constructResponseSchema(
+          z.object({
+            totalDocuments: z.number(),
+            failClosedDocuments: z.number(),
+            /** A permission-sync pass is currently running. */
+            permissionSyncRunning: z.boolean(),
+            /** Next scheduled pass per the effective global cron, if valid. */
+            nextScheduledAt: z.string().nullable(),
+          }),
+        ),
+      },
+    },
+    async ({ params: { id }, organizationId, user }, reply) => {
+      const connector = await findConnectorOrThrow({
+        id,
+        organizationId,
+        userId: user.id,
+      });
+
+      if (connector.visibility !== "auto-sync-permissions") {
+        throw new ApiError(
+          400,
+          "Permission coverage only applies to auto-sync-permissions connectors",
+        );
+      }
+
+      const [coverage, permissionSyncRunning, organization] = await Promise.all(
+        [
+          KbDocumentModel.getAclCoverageByConnector(id),
+          ConnectorRunModel.hasRunningRun({
+            connectorId: id,
+            runType: "permission",
+          }),
+          OrganizationModel.getById(organizationId),
+        ],
+      );
+
+      // Effective schedule: org override, else the env default. An invalid
+      // cron just yields no next-run rather than failing the endpoint.
+      let nextScheduledAt: string | null = null;
+      try {
+        const schedule =
+          organization?.permissionSyncSchedule ??
+          config.kb.permissionSyncScheduleDefault;
+        nextScheduledAt = new Cron(schedule).nextRun()?.toISOString() ?? null;
+      } catch {
+        // ignore — no next-run for an unparsable schedule
+      }
+
+      return reply.send({
+        totalDocuments: coverage.totalDocuments,
+        failClosedDocuments: coverage.failClosedDocuments,
+        permissionSyncRunning,
+        nextScheduledAt,
+      });
     },
   );
   // SPDX-SnippetEnd

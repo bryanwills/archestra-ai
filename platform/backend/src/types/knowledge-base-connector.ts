@@ -103,9 +103,39 @@ export type UpdateKnowledgeBaseConnector = z.infer<
 
 // ===== Connector Run Schemas =====
 
+/**
+ * Outcome stats of a permission-sync pass, stored on its `connector_runs` row
+ * (`stats` jsonb) and updated per checkpoint so a running pass shows live
+ * progress. The generic document counters stay 0 for permission runs — these
+ * are the family-relevant numbers an admin needs: how much of the corpus was
+ * scanned, what changed, what fail-closed, and whether the pass ran while a
+ * content sync was still ingesting (in which case later-ingested documents
+ * stay access-restricted until the next pass).
+ */
+export const PermissionSyncRunStatsSchema = z.object({
+  /** Documents in the corpus when the pass started (the scan denominator). */
+  totalDocs: z.number(),
+  docsScanned: z.number(),
+  aclsChanged: z.number(),
+  chunksRewritten: z.number(),
+  /** Docs no longer visible upstream, swept to an empty ACL. */
+  failClosed: z.number(),
+  groupsSynced: z.number(),
+  membershipsUpserted: z.number(),
+  /** True when a content sync was running when this pass started. */
+  contentSyncActiveDuringRun: z.boolean(),
+});
+export type PermissionSyncRunStats = z.infer<
+  typeof PermissionSyncRunStatsSchema
+>;
+
 export const SelectConnectorRunSchema = createSelectSchema(
   schema.connectorRunsTable,
-  { status: ConnectorSyncStatusSchema, runType: ConnectorRunTypeSchema },
+  {
+    status: ConnectorSyncStatusSchema,
+    runType: ConnectorRunTypeSchema,
+    stats: PermissionSyncRunStatsSchema.nullable(),
+  },
 );
 // Internal liveness-lease columns — never exposed in API responses.
 const CONNECTOR_RUN_LEASE_FIELDS = {
@@ -142,6 +172,7 @@ export const UpdateConnectorRunSchema = createUpdateSchema(
   error: true,
   logs: true,
   checkpoint: true,
+  stats: true,
   totalBatches: true,
   completedBatches: true,
   itemErrors: true,

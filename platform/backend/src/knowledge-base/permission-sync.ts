@@ -16,6 +16,7 @@ import type {
   Connector,
   InsertKbExternalUserGroup,
   KnowledgeBaseConnector,
+  PermissionSyncRunStats,
   ReadIngestedDocuments,
 } from "@/types";
 import { resolveConnectorCredentials } from "./connector-credentials";
@@ -215,8 +216,26 @@ class PermissionSyncService {
           nextAfterId: rows.length > 0 ? rows[rows.length - 1].id : null,
         };
       };
-      let docsScanned = 0;
-      let aclsChanged = 0;
+      // Family-relevant run stats, persisted on the run row alongside each
+      // checkpoint (live progress) and finalized on completion. The
+      // content-sync counters stay 0 for permission runs; these are what the
+      // Permission Sync Runs UI renders.
+      const stats: PermissionSyncRunStats = {
+        totalDocs: 0,
+        docsScanned: 0,
+        aclsChanged: 0,
+        chunksRewritten: 0,
+        failClosed: 0,
+        groupsSynced: 0,
+        membershipsUpserted: 0,
+        // A pass overlapping a content backfill only covers what was ingested
+        // when it enumerated; later-ingested docs stay fail-closed until the
+        // next pass. Surfaced so a "success" during a backfill is legible.
+        contentSyncActiveDuringRun: await ConnectorRunModel.hasRunningRun({
+          connectorId,
+          runType: "content",
+        }),
+      };
 
       // ---- Phase 1: groups (completion-gated stale sweep). Not resumed
       // mid-way — small and dedupable; a restart re-marks and re-observes.
@@ -238,6 +257,8 @@ class PermissionSyncService {
             cursor: null,
             readIngestedDocuments,
           })) {
+            stats.groupsSynced += 1;
+            stats.membershipsUpserted += group.memberEmails.length;
             for (const memberEmail of group.memberEmails) {
               pending.push({
                 organizationId: connector.organizationId,
@@ -267,19 +288,21 @@ class PermissionSyncService {
         }
       }
 
-      await this.checkpoint(runId, epoch, {
-        phase: "documents",
-        cursor: null,
-        generation,
-      });
+      await this.checkpoint(
+        runId,
+        epoch,
+        { phase: "documents", cursor: null, generation },
+        stats,
+      );
 
       // ---- Phase 2: documents (generation-gated full reconcile) ----
       const totalDocs = await KbDocumentModel.countByConnector(connectorId);
+      stats.totalDocs = totalDocs;
       if (totalDocs === 0) {
         // Fast-exit: nothing ingested yet. New content is fail-closed until a
         // later pass (content-sync creates auto-sync docs with acl=[]).
         runLog.info("No documents yet; permission pass fast-exits");
-        await this.finalize({ connectorId, runId, epoch, startedAt });
+        await this.finalize({ connectorId, runId, epoch, startedAt, stats });
         metrics.rag.reportPermissionSync({
           connectorType: connector.connectorType,
           status: "success",
@@ -302,20 +325,22 @@ class PermissionSyncService {
 
       const flush = async () => {
         if (batch.length === 0) return;
-        const changed = await this.flushDocumentBatch({
+        const { changed, chunksRewritten } = await this.flushDocumentBatch({
           connector,
           batch,
           generation,
           aclConfigEpoch,
         });
-        docsScanned += batch.length;
-        aclsChanged += changed;
+        stats.docsScanned += batch.length;
+        stats.aclsChanged += changed;
+        stats.chunksRewritten += chunksRewritten;
         batch = [];
-        await this.checkpoint(runId, epoch, {
-          phase: "documents",
-          cursor: latestCursor,
-          generation,
-        });
+        await this.checkpoint(
+          runId,
+          epoch,
+          { phase: "documents", cursor: latestCursor, generation },
+          stats,
+        );
         await yieldToEventLoop();
       };
 
@@ -336,7 +361,6 @@ class PermissionSyncService {
       await flush();
 
       // ---- Generation-gated fail-close sweep (only after full enumeration) ----
-      let sweptTotal = 0;
       for (;;) {
         const swept = await KbDocumentModel.failCloseStaleDocuments({
           connectorId,
@@ -344,21 +368,19 @@ class PermissionSyncService {
           aclConfigEpoch,
           batchSize: config.kb.permissionSyncBatchSize,
         });
-        sweptTotal += swept;
+        stats.failClosed += swept;
         if (swept === 0) break;
         await yieldToEventLoop();
       }
 
-      runLog.info(
-        { docsScanned, aclsChanged, failClosed: sweptTotal, generation },
-        "Permission sync pass complete",
-      );
+      runLog.info({ ...stats, generation }, "Permission sync pass complete");
 
       await this.finalize({
         connectorId,
         runId,
         epoch,
         startedAt,
+        stats,
         getLogOutput,
       });
       metrics.rag.reportPermissionSync({
@@ -381,6 +403,8 @@ class PermissionSyncService {
           ...(getLogOutput ? { logs: getLogOutput() } : {}),
         },
       });
+      // `stats` is scoped to the try block (it captures the content-run check);
+      // the partial row keeps whatever the last checkpoint persisted.
       await KnowledgeBaseConnectorModel.update(connectorId, {
         lastPermissionSyncStatus: "partial",
       });
@@ -397,7 +421,7 @@ class PermissionSyncService {
     batch: { sourceId: string; permissions: unknown }[];
     generation: number;
     aclConfigEpoch: number;
-  }): Promise<number> {
+  }): Promise<{ changed: number; chunksRewritten: number }> {
     const { connector, batch, generation, aclConfigEpoch } = params;
     const sourceIds = batch.map((item) => item.sourceId);
     const current = await KbDocumentModel.findAclStateBySourceIds({
@@ -407,6 +431,7 @@ class PermissionSyncService {
     const bySourceId = new Map(current.map((doc) => [doc.sourceId, doc]));
 
     let changed = 0;
+    let chunksRewritten = 0;
     const unchangedIds: string[] = [];
 
     for (const item of batch) {
@@ -429,7 +454,7 @@ class PermissionSyncService {
 
       // Crash-safe ordering: chunk ACLs first, then the doc row (acl +
       // generation stamp) last. Both epoch-fenced.
-      await KbChunkModel.updateAclByDocument({
+      chunksRewritten += await KbChunkModel.updateAclByDocument({
         documentId: doc.id,
         acl: nextAcl,
         connectorId: connector.id,
@@ -453,18 +478,21 @@ class PermissionSyncService {
       aclConfigEpoch,
     });
 
-    return changed;
+    return { changed, chunksRewritten };
   }
 
   private async checkpoint(
     runId: string,
     epoch: number,
     checkpoint: PermissionSyncCheckpoint,
+    stats?: PermissionSyncRunStats,
   ): Promise<void> {
     await ConnectorRunModel.updateIfOwned({
       runId,
       epoch,
-      data: { checkpoint },
+      // Stats ride along with every checkpoint so a running pass shows live
+      // progress (they are cheap — same fenced UPDATE).
+      data: { checkpoint, ...(stats ? { stats: { ...stats } } : {}) },
     });
   }
 
@@ -473,6 +501,7 @@ class PermissionSyncService {
     runId: string;
     epoch: number;
     startedAt: Date;
+    stats?: PermissionSyncRunStats;
     getLogOutput?: () => string;
   }): Promise<void> {
     const owned = await ConnectorRunModel.updateIfOwned({
@@ -481,6 +510,7 @@ class PermissionSyncService {
       data: {
         status: "success",
         completedAt: new Date(),
+        ...(params.stats ? { stats: { ...params.stats } } : {}),
         ...(params.getLogOutput ? { logs: params.getLogOutput() } : {}),
       },
     });

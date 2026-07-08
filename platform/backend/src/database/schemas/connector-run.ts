@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { PermissionSyncRunStats } from "@/types/knowledge-base-connector";
 import type {
   ConnectorRunType,
   ConnectorSyncStatus,
@@ -45,6 +46,11 @@ const connectorRunsTable = pgTable(
     error: text("error"),
     logs: text("logs"),
     checkpoint: jsonb("checkpoint").$type<Record<string, unknown>>(),
+    // Per-run outcome stats. Written by the permission-sync pass (see
+    // PermissionSyncRunStats) so its runs surface family-relevant counters
+    // (docs scanned, ACLs changed, fail-closed, groups) instead of the
+    // content-sync document counters, which stay 0 for permission runs.
+    stats: jsonb("stats").$type<PermissionSyncRunStats>(),
     // Liveness lease: the owning worker renews `leaseExpiresAt` (a heartbeat)
     // across both the ingest and embedding-drain phases. A run whose lease has
     // lapsed is treated as orphaned by the reaper. `leaseEpoch` is a monotonic

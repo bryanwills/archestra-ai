@@ -35,6 +35,7 @@ class ConnectorRunModel {
         itemsSkipped: t.itemsSkipped,
         error: t.error,
         checkpoint: t.checkpoint,
+        stats: t.stats,
         createdAt: t.createdAt,
       })
       .from(t)
@@ -175,6 +176,26 @@ class ConnectorRunModel {
       })
       .returning();
     return run ? { outcome: "claimed", run } : { outcome: "busy" };
+  }
+
+  /** Whether a run of the given family is currently `running` for the connector. */
+  static async hasRunningRun(params: {
+    connectorId: string;
+    runType: ConnectorRunType;
+  }): Promise<boolean> {
+    const t = schema.connectorRunsTable;
+    const [row] = await db
+      .select({ id: t.id })
+      .from(t)
+      .where(
+        and(
+          eq(t.connectorId, params.connectorId),
+          eq(t.runType, params.runType),
+          eq(t.status, "running"),
+        ),
+      )
+      .limit(1);
+    return !!row;
   }
 
   /**

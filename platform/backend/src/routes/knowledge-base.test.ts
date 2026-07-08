@@ -3,6 +3,7 @@ import config from "@/config";
 import { enterpriseTier } from "@/enterprise-tier";
 import { knowledgeSourceAccessControlService } from "@/knowledge-base";
 import {
+  ConnectorRunModel,
   GithubAppConfigModel,
   KbChunkModel,
   KbDocumentModel,
@@ -2028,6 +2029,103 @@ describe("knowledge base routes", () => {
 
       expect(response.statusCode).toBe(400);
       expect(response.json().error.message).toContain("not supported");
+    });
+  });
+
+  describe("GET /api/connectors/:id/permission-coverage", () => {
+    test("reports total vs fail-closed documents for an auto-sync connector", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+      // One tagged doc + one still fail-closed (awaiting a pass).
+      await KbDocumentModel.create({
+        organizationId,
+        sourceId: "tagged",
+        connectorId: connector.id,
+        title: "t",
+        content: "c",
+        contentHash: "h1",
+        acl: ["user_email:alice@example.com"],
+      });
+      await KbDocumentModel.create({
+        organizationId,
+        sourceId: "pending",
+        connectorId: connector.id,
+        title: "t",
+        content: "c",
+        contentHash: "h2",
+        acl: [],
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/permission-coverage`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.totalDocuments).toBe(2);
+      expect(body.failClosedDocuments).toBe(1);
+      expect(body.permissionSyncRunning).toBe(false);
+      // Effective global schedule always yields a next run in tests.
+      expect(typeof body.nextScheduledAt).toBe("string");
+    });
+
+    test("flags a running permission sync", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+      await ConnectorRunModel.claim({
+        connectorId: connector.id,
+        owner: "w",
+        leaseTtlSeconds: 300,
+        runType: "permission",
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/permission-coverage`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().permissionSyncRunning).toBe(true);
+    });
+
+    test("rejects a non-auto-sync connector with 400", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        { connectorType: "github", visibility: "org-wide" },
+      );
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/permission-coverage`,
+      });
+
+      expect(response.statusCode).toBe(400);
     });
   });
 });
