@@ -180,6 +180,7 @@ export {
   getConnectorRun,
   getConnectorRuns,
   getConnectors,
+  getConnectorUserGroups,
   getConversationEnabledTools,
   getConversationShare,
   getCostSavingsStatistics,

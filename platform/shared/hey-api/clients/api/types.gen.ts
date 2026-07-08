@@ -43938,6 +43938,119 @@ export type GetPermissionSyncCoverageResponses = {
 
 export type GetPermissionSyncCoverageResponse = GetPermissionSyncCoverageResponses[keyof GetPermissionSyncCoverageResponses];
 
+export type GetConnectorUserGroupsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connectors/{id}/user-groups';
+};
+
+export type GetConnectorUserGroupsErrors = {
+    /**
+     * Default Response
+     */
+    400: {
+        error: {
+            message: string;
+            type: 'api_validation_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    401: {
+        error: {
+            message: string;
+            type: 'api_authentication_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    403: {
+        error: {
+            message: string;
+            type: 'api_authorization_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    404: {
+        error: {
+            message: string;
+            type: 'api_not_found_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    409: {
+        error: {
+            message: string;
+            type: 'api_conflict_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    500: {
+        error: {
+            message: string;
+            type: 'api_internal_server_error';
+            internal_code?: string;
+        };
+    };
+};
+
+export type GetConnectorUserGroupsError = GetConnectorUserGroupsErrors[keyof GetConnectorUserGroupsErrors];
+
+export type GetConnectorUserGroupsResponses = {
+    /**
+     * Default Response
+     */
+    200: {
+        groups: Array<{
+            /**
+             * Upstream group identifier as the source system names it.
+             */
+            groupId: string;
+            /**
+             * The exact `group:` ACL token written on documents.
+             */
+            token: string;
+            /**
+             * Documents on this connector whose ACL grants the group.
+             */
+            documentCount: number;
+            /**
+             * Most recent membership snapshot update, if any members.
+             */
+            lastSyncedAt: string | null;
+            members: Array<{
+                email: string;
+                /**
+                 * Org user this email resolves to; null = grant currently resolves to nobody.
+                 */
+                user: {
+                    id: string;
+                    name: string;
+                } | null;
+            }>;
+        }>;
+    };
+};
+
+export type GetConnectorUserGroupsResponse = GetConnectorUserGroupsResponses[keyof GetConnectorUserGroupsResponses];
+
+
 export type ForceResyncConnectorData = {
     body?: never;
     path: {
