@@ -3,7 +3,7 @@ title: Supported LLM Providers
 category: LLM Proxy
 order: 2
 description: LLM providers supported by Archestra Platform
-lastUpdated: 2026-07-03
+lastUpdated: 2026-07-08
 ---
 
 ## Overview
@@ -558,6 +558,56 @@ Obtain the token in either way:
 - **Per-user only**: because the token is tied to one GitHub account, Copilot keys are **personal scope only** — they can't be shared via team/org scope or wrapped in a shared (org/team or multi-provider model-router) virtual key. Each user connects their own account. When someone uses an agent with a Copilot model but hasn't connected yet, Archestra resolves *their* key (never the agent owner's) and prompts them to connect: an inline "Connect GitHub Copilot" card in chat, or a message with a Settings link in Slack/Teams. Email and scheduled runs fail with an actionable message.
 - **Chat-completions models only**: the `/models` listing is filtered to models reachable through `/chat/completions`. Copilot also serves Responses-API-only models (e.g. `gpt-5.3-codex`) and an Anthropic `/v1/messages` shim, which Archestra does not route to.
 - **GitHub Enterprise**: point the base, token-exchange, and device-auth URLs at your GHE host. Organizations with their own GitHub App can override the client id.
+
+## Microsoft Copilot
+
+[Microsoft 365 Copilot](https://www.microsoft.com/en-us/microsoft-365/copilot) answers prompts grounded in the user's Microsoft 365 tenant data (mail, SharePoint, Teams) and the web. Archestra connects to it through the [Microsoft 365 Copilot Chat API](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/api/ai-services/chat/overview) (Microsoft Graph, beta). Like GitHub Copilot, there are no static API keys: access is tied to an individual Microsoft work account with an M365 Copilot license.
+
+### Supported Microsoft Copilot APIs
+
+- **Chat API** (`/copilot/conversations/{id}/chat`) - synchronous answers
+- **Chat streaming API** (`/copilot/conversations/{id}/chatOverStream`) - streamed answers
+
+Archestra exposes both through its standard OpenAI-compatible `/chat/completions` proxy surface. The single model is `microsoft-365-copilot` — the Chat API has no model selection.
+
+### Microsoft Copilot Connection Details
+
+- **Base URL**: `http://localhost:9000/v1/microsoft-copilot/{profile-id}`
+- **Authentication**: Pass the stored **Entra refresh token** (the credential below) in the `Authorization` header as `Bearer <token>`
+
+### Prerequisites: Entra App Registration
+
+The sign-in flow needs an [Entra ID app registration](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app) owned by your organization:
+
+1. Register an application in the Microsoft Entra admin center.
+2. Enable **Allow public client flows** (Authentication → Advanced settings).
+3. Add these **delegated** Microsoft Graph permissions and grant admin consent: `Sites.Read.All`, `Mail.Read`, `People.Read.All`, `OnlineMeetingTranscript.Read.All`, `Chat.Read`, `ChannelMessage.Read.All`, `ExternalItem.Read.All`.
+4. Set `ARCHESTRA_MICROSOFT_COPILOT_CLIENT_ID` to the Application (client) ID.
+
+### Authentication
+
+A Microsoft Copilot provider key stores a **long-lived Entra refresh token** for an account with an M365 Copilot license. Archestra redeems it for a short-lived Graph access token on every request (cached and refreshed automatically). Entra rotates refresh tokens; Archestra persists the rotated token back to the key.
+
+To connect, use the **Sign in with Microsoft** button when adding a Microsoft Copilot key. It runs Entra's OAuth device flow — you approve a one-time code at `microsoft.com/devicelogin`, and Archestra stores the resulting refresh token.
+
+### Environment Variables
+
+| Variable                                    | Required | Description                                                                              |
+| ------------------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `ARCHESTRA_MICROSOFT_COPILOT_CLIENT_ID`     | Yes      | Application (client) ID of your Entra app registration (sign-in is unavailable without it) |
+| `ARCHESTRA_MICROSOFT_COPILOT_TENANT_ID`     | No       | Entra tenant of the OAuth endpoints (default: `organizations`; pin your tenant id to restrict sign-in) |
+| `ARCHESTRA_MICROSOFT_COPILOT_BASE_URL`      | No       | Microsoft Graph base URL (default: `https://graph.microsoft.com/beta`)                   |
+| `ARCHESTRA_MICROSOFT_COPILOT_AUTH_BASE_URL` | No       | Entra host for device sign-in and token redemption (default: `https://login.microsoftonline.com`) |
+| `ARCHESTRA_CHAT_MICROSOFT_COPILOT_API_KEY`  | No       | Default Entra refresh token for the built-in chat feature                                |
+
+### Important Notes
+
+- **Preview API**: the Chat API is a Microsoft Graph **beta** endpoint. Microsoft does not support it for production use and may change it without notice.
+- **License required**: each user needs a Microsoft 365 Copilot add-on license. Key validation only proves the Entra sign-in works — a missing license surfaces on the first chat request.
+- **Per-user only**: keys are **personal scope only**, same as GitHub Copilot. Each user connects their own Microsoft account; an inline "Connect Microsoft Copilot" card appears in chat when a key is missing.
+- **Text-only, no tools**: the Chat API returns text answers and cannot execute tools. Requests that declare tools (an agent with MCP tools, for example) are rejected with a clear error — use a different provider for tool-based workflows.
+- **Estimated usage**: the Chat API reports no token counts, so usage and cost figures are tokenizer estimates.
+- **Stateless mapping**: each request creates a fresh Copilot conversation; prior turns ride along as context.
 
 ## Amazon Bedrock
 
