@@ -549,6 +549,7 @@ export const RouteId = {
   SyncConnector: "syncConnector",
   TriggerPermissionSync: "triggerPermissionSync",
   GetPermissionSyncCoverage: "getPermissionSyncCoverage",
+  GetConnectorUserGroups: "getConnectorUserGroups",
   ForceResyncConnector: "forceResyncConnector",
   TestConnectorConnection: "testConnectorConnection",
 

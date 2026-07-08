@@ -7,6 +7,7 @@ import {
   GithubAppConfigModel,
   KbChunkModel,
   KbDocumentModel,
+  KbExternalUserGroupModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
   TaskModel,
@@ -2152,6 +2153,169 @@ describe("knowledge base routes", () => {
       const response = await app.inject({
         method: "GET",
         url: `/api/connectors/${connector.id}/permission-coverage`,
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe("GET /api/connectors/:id/user-groups", () => {
+    test("aggregates the membership snapshot and resolves members to org users", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+      makeUser,
+      makeMember,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+
+      // alice is an org member (resolves); bob has no account (resolves to nobody).
+      const alice = await makeUser({ email: "Alice@Example.com" });
+      await makeMember(alice.id, organizationId);
+      await KbExternalUserGroupModel.upsertMany([
+        {
+          organizationId,
+          connectorId: connector.id,
+          connectorType: "github",
+          groupId: "engineers",
+          memberEmail: "alice@example.com",
+        },
+        {
+          organizationId,
+          connectorId: connector.id,
+          connectorType: "github",
+          groupId: "engineers",
+          memberEmail: "bob@example.com",
+        },
+      ]);
+      // Two docs grant the group, one grants only an unknown group.
+      await KbDocumentModel.create({
+        organizationId,
+        sourceId: "d1",
+        connectorId: connector.id,
+        title: "t",
+        content: "c",
+        contentHash: "h1",
+        acl: ["group:github_engineers"],
+      });
+      await KbDocumentModel.create({
+        organizationId,
+        sourceId: "d2",
+        connectorId: connector.id,
+        title: "t",
+        content: "c",
+        contentHash: "h2",
+        acl: ["group:github_engineers", "user_email:alice@example.com"],
+      });
+      await KbDocumentModel.create({
+        organizationId,
+        sourceId: "d3",
+        connectorId: connector.id,
+        title: "t",
+        content: "c",
+        contentHash: "h3",
+        acl: ["group:github_ghosts"],
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/user-groups`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const { groups } = response.json();
+      expect(groups).toHaveLength(2);
+
+      const engineers = groups.find(
+        (g: { groupId: string }) => g.groupId === "engineers",
+      );
+      expect(engineers.token).toBe("group:github_engineers");
+      expect(engineers.documentCount).toBe(2);
+      expect(engineers.lastSyncedAt).toEqual(expect.any(String));
+      expect(engineers.members).toEqual([
+        {
+          email: "alice@example.com",
+          user: { id: alice.id, name: alice.name },
+        },
+        { email: "bob@example.com", user: null },
+      ]);
+
+      // Granted on a document but absent from the snapshot: visible, no members.
+      const ghosts = groups.find(
+        (g: { groupId: string }) => g.groupId === "ghosts",
+      );
+      expect(ghosts).toEqual({
+        groupId: "ghosts",
+        token: "group:github_ghosts",
+        documentCount: 1,
+        lastSyncedAt: null,
+        members: [],
+      });
+    });
+
+    test("does not resolve a user from another organization's membership", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+      makeUser,
+      makeOrganization,
+      makeMember,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+      // carol exists but is a member of a DIFFERENT org — must not resolve.
+      const carol = await makeUser({ email: "carol@example.com" });
+      const otherOrg = await makeOrganization();
+      await makeMember(carol.id, otherOrg.id);
+      await KbExternalUserGroupModel.upsertMany([
+        {
+          organizationId,
+          connectorId: connector.id,
+          connectorType: "github",
+          groupId: "engineers",
+          memberEmail: "carol@example.com",
+        },
+      ]);
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/user-groups`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const { groups } = response.json();
+      expect(groups[0].members).toEqual([
+        { email: "carol@example.com", user: null },
+      ]);
+    });
+
+    test("rejects a non-auto-sync connector with 400", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        { connectorType: "github", visibility: "org-wide" },
+      );
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/user-groups`,
       });
 
       expect(response.statusCode).toBe(400);

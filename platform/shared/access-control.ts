@@ -1340,6 +1340,7 @@ export const requiredEndpointPermissionsMap: Partial<
   [RouteId.SyncConnector]: { knowledgeSource: ["update"] },
   [RouteId.TriggerPermissionSync]: { knowledgeSource: ["update"] },
   [RouteId.GetPermissionSyncCoverage]: { knowledgeSource: ["read"] },
+  [RouteId.GetConnectorUserGroups]: { knowledgeSource: ["read"] },
   [RouteId.ForceResyncConnector]: { knowledgeSource: ["update"] },
   [RouteId.TestConnectorConnection]: { knowledgeSource: ["read"] },
 

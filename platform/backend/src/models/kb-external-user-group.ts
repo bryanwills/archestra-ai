@@ -1,5 +1,5 @@
 // This file contains Enterprise regions licensed under LICENSE_ENTERPRISE.
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import db, { schema } from "@/database";
 import { buildGroupToken, normalizeEmail } from "@/knowledge-base/acl-tokens";
 import type { AclEntry, InsertKbExternalUserGroup } from "@/types";
@@ -103,6 +103,61 @@ class KbExternalUserGroupModel {
         groupId: row.groupId,
       }),
     );
+  }
+
+  /**
+   * The full membership snapshot for a connector, each row annotated with the
+   * Archestra org member it resolves to at query time. Resolution is the same
+   * normalized-email join `findGroupTokensForUser` enforces with, so what this
+   * reports is exactly what access control does: `user` is null when no org
+   * member carries that email and the grant currently resolves to nobody.
+   */
+  static async findMembershipsWithUsersByConnector(params: {
+    connectorId: string;
+    organizationId: string;
+  }): Promise<
+    {
+      groupId: string;
+      memberEmail: string;
+      updatedAt: Date;
+      user: { id: string; name: string } | null;
+    }[]
+  > {
+    const t = schema.kbExternalUserGroupTable;
+    const rows = await db
+      .select({
+        groupId: t.groupId,
+        memberEmail: t.memberEmail,
+        updatedAt: t.updatedAt,
+        userId: schema.usersTable.id,
+        userName: schema.usersTable.name,
+        memberId: schema.membersTable.id,
+      })
+      .from(t)
+      .leftJoin(
+        schema.usersTable,
+        sql`lower(${schema.usersTable.email}) = ${t.memberEmail}`,
+      )
+      .leftJoin(
+        schema.membersTable,
+        and(
+          eq(schema.membersTable.userId, schema.usersTable.id),
+          eq(schema.membersTable.organizationId, params.organizationId),
+        ),
+      )
+      .where(eq(t.connectorId, params.connectorId))
+      .orderBy(t.groupId, t.memberEmail);
+
+    return rows.map((row) => ({
+      groupId: row.groupId,
+      memberEmail: row.memberEmail,
+      updatedAt: row.updatedAt,
+      // A matching user account only counts if it is a member of this org.
+      user:
+        row.memberId && row.userId && row.userName !== null
+          ? { id: row.userId, name: row.userName }
+          : null,
+    }));
   }
 
   static async deleteByConnector(connectorId: string): Promise<number> {

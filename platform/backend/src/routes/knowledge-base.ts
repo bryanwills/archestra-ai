@@ -16,6 +16,7 @@ import {
   isTeamScopedWithoutTeams,
   knowledgeSourceAccessControlService,
 } from "@/knowledge-base";
+import { buildGroupToken } from "@/knowledge-base/acl-tokens";
 import { resolveConnectorCredentials } from "@/knowledge-base/connector-credentials";
 import { getConnector } from "@/knowledge-base/connectors/registry";
 import logger from "@/logging";
@@ -26,6 +27,7 @@ import {
   ConnectorRunModel,
   GithubAppConfigModel,
   KbDocumentModel,
+  KbExternalUserGroupModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
   OrganizationModel,
@@ -1212,6 +1214,132 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         failClosedDocuments: coverage.failClosedDocuments,
         permissionSyncRunning,
         nextScheduledAt,
+      });
+    },
+  );
+
+  fastify.get(
+    "/api/connectors/:id/user-groups",
+    {
+      schema: {
+        operationId: RouteId.GetConnectorUserGroups,
+        description:
+          "Synced external user groups for an auto-sync-permissions connector: each group's member emails, the Archestra org users they resolve to, and how many documents grant the group",
+        tags: ["Connectors"],
+        params: z.object({ id: z.uuid() }),
+        response: constructResponseSchema(
+          z.object({
+            groups: z.array(
+              z.object({
+                /** Upstream group identifier as the source system names it. */
+                groupId: z.string(),
+                /** The exact `group:` ACL token written on documents. */
+                token: z.string(),
+                /** Documents on this connector whose ACL grants the group. */
+                documentCount: z.number(),
+                /** Most recent membership snapshot update, if any members. */
+                lastSyncedAt: z.string().nullable(),
+                members: z.array(
+                  z.object({
+                    email: z.string(),
+                    /** Org user this email resolves to; null = grant currently resolves to nobody. */
+                    user: z
+                      .object({ id: z.string(), name: z.string() })
+                      .nullable(),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      },
+    },
+    async ({ params: { id }, organizationId, user }, reply) => {
+      const connector = await findConnectorOrThrow({
+        id,
+        organizationId,
+        userId: user.id,
+      });
+
+      if (connector.visibility !== "auto-sync-permissions") {
+        throw new ApiError(
+          400,
+          "User groups only apply to auto-sync-permissions connectors",
+        );
+      }
+
+      const [memberships, documentCounts] = await Promise.all([
+        KbExternalUserGroupModel.findMembershipsWithUsersByConnector({
+          connectorId: id,
+          organizationId,
+        }),
+        KbDocumentModel.getGroupTokenDocumentCounts(id),
+      ]);
+
+      const groups = new Map<
+        string,
+        {
+          groupId: string;
+          token: string;
+          documentCount: number;
+          lastSyncedAt: string | null;
+          members: {
+            email: string;
+            user: { id: string; name: string } | null;
+          }[];
+        }
+      >();
+
+      for (const membership of memberships) {
+        const token = buildGroupToken({
+          connectorType: connector.connectorType,
+          groupId: membership.groupId,
+        });
+        let group = groups.get(token);
+        if (!group) {
+          group = {
+            groupId: membership.groupId,
+            token,
+            documentCount: 0,
+            lastSyncedAt: null,
+            members: [],
+          };
+          groups.set(token, group);
+        }
+        group.members.push({
+          email: membership.memberEmail,
+          user: membership.user,
+        });
+        const syncedAt = membership.updatedAt.toISOString();
+        if (group.lastSyncedAt === null || syncedAt > group.lastSyncedAt) {
+          group.lastSyncedAt = syncedAt;
+        }
+      }
+
+      // Groups granted on documents but absent from the membership snapshot
+      // still show up (with no members) — those grants resolve to nobody.
+      const tokenPrefix = `group:${connector.connectorType}_`;
+      for (const [token, documentCount] of documentCounts) {
+        const group = groups.get(token);
+        if (group) {
+          group.documentCount = documentCount;
+        } else {
+          groups.set(token, {
+            groupId: token.startsWith(tokenPrefix)
+              ? token.slice(tokenPrefix.length)
+              : token,
+            token,
+            documentCount,
+            lastSyncedAt: null,
+            members: [],
+          });
+        }
+      }
+
+      return reply.send({
+        groups: [...groups.values()].sort((a, b) =>
+          a.groupId.localeCompare(b.groupId),
+        ),
       });
     },
   );

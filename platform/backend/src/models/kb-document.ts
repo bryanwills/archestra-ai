@@ -450,6 +450,24 @@ class KbDocumentModel {
   }
 
   /**
+   * Distinct `group:` ACL tokens across a connector's documents with how many
+   * documents grant each. Includes groups the membership snapshot has no rows
+   * for, which is how an admin spots a grant that currently resolves to nobody.
+   */
+  static async getGroupTokenDocumentCounts(
+    connectorId: string,
+  ): Promise<Map<string, number>> {
+    const { rows } = await db.execute<{ token: string; count: number }>(sql`
+      SELECT token, count(*)::int AS count
+      FROM ${schema.kbDocumentsTable} d,
+           LATERAL jsonb_array_elements_text(d.acl) AS token
+      WHERE d.connector_id = ${connectorId} AND token LIKE 'group:%'
+      GROUP BY token
+    `);
+    return new Map(rows.map((row) => [row.token, Number(row.count)]));
+  }
+
+  /**
    * Lean projection of the current per-document ACL state for a batch of source
    * ids, used by the permission-sync pass to diff without loading document
    * content. O(batch) memory.
