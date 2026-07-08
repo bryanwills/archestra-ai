@@ -189,7 +189,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
   const [isForceResyncOpen, setIsForceResyncOpen] = useState(false);
 
   const [pageIndex, setPageIndex] = useState(0);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const { data: runsData, isPending: isRunsPending } = useConnectorRuns({
@@ -210,6 +210,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
   const handlePaginationChange = useCallback(
     (newPagination: { pageIndex: number; pageSize: number }) => {
       setPageIndex(newPagination.pageIndex);
+      setPageSize(newPagination.pageSize);
     },
     [],
   );

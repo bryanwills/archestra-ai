@@ -445,5 +445,51 @@ describe("ConnectorDetailPage", () => {
         screen.getByText(/No permission sync runs yet/),
       ).toBeInTheDocument();
     });
+
+    it("refetches runs with the new limit when rows-per-page changes", async () => {
+      // Radix Select relies on pointer-capture + scrollIntoView, which jsdom
+      // does not implement.
+      window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+      window.HTMLElement.prototype.setPointerCapture = vi.fn();
+      window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+      window.HTMLElement.prototype.scrollIntoView = vi.fn();
+      const { userEvent } = await import("@testing-library/user-event").then(
+        (m) => ({ userEvent: m.default.setup() }),
+      );
+      mockUseConnector.mockReturnValue({
+        data: makeConnector({ visibility: "auto-sync-permissions" }),
+        isPending: false,
+        isLoadingError: false,
+        refetch: vi.fn(),
+      });
+      setSearchParams({ tab: "permission-runs" });
+      mockUseConnectorRuns.mockReturnValue({
+        data: {
+          data: [
+            {
+              id: "run-1",
+              connectorId: CONNECTOR_ID,
+              status: "success",
+              runType: "permission",
+              startedAt: "2026-07-08T10:00:00Z",
+              completedAt: "2026-07-08T10:05:00Z",
+              stats: null,
+            },
+          ],
+          pagination: { total: 30 },
+        },
+        isPending: false,
+      });
+
+      render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
+
+      // Pick 20 in the rows-per-page selector (first of the desktop/mobile pair).
+      await userEvent.click(screen.getAllByRole("combobox")[0]);
+      await userEvent.click(await screen.findByRole("option", { name: "20" }));
+
+      expect(mockUseConnectorRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 20, offset: 0 }),
+      );
+    });
   });
 });
