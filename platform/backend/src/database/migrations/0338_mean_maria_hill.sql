@@ -23,4 +23,5 @@ ALTER TABLE "kb_external_user_group" ADD CONSTRAINT "kb_external_user_group_conn
 CREATE UNIQUE INDEX "kb_external_user_group_unique_idx" ON "kb_external_user_group" USING btree ("connector_id","group_id","member_email");--> statement-breakpoint
 CREATE INDEX "kb_external_user_group_member_email_idx" ON "kb_external_user_group" USING btree ("member_email");--> statement-breakpoint
 CREATE INDEX "kb_external_user_group_connector_id_idx" ON "kb_external_user_group" USING btree ("connector_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "connector_runs_one_running_per_connector_run_type_idx" ON "connector_runs" USING btree ("connector_id","run_type") WHERE status = 'running';
+CREATE UNIQUE INDEX "connector_runs_one_running_per_connector_run_type_idx" ON "connector_runs" USING btree ("connector_id","run_type") WHERE status = 'running';--> statement-breakpoint
+ALTER TABLE "connector_runs" ADD COLUMN "stats" jsonb;

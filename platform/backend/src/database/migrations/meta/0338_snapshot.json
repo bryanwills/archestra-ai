@@ -4184,6 +4184,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "stats": {
+          "name": "stats",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "lease_owner": {
           "name": "lease_owner",
           "type": "text",
