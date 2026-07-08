@@ -95,7 +95,11 @@ export function useConnector(id: string) {
     },
     enabled: !!id,
     refetchInterval: (query) => {
-      return query.state.data?.lastSyncStatus === "running" ? 3000 : false;
+      const connector = query.state.data;
+      return connector?.lastSyncStatus === "running" ||
+        connector?.lastPermissionSyncStatus === "running"
+        ? 3000
+        : false;
     },
   });
 }
@@ -364,7 +368,18 @@ export function useConnectorRuns(params: {
       const connector = queryClient.getQueryData<
         archestraApiTypes.GetConnectorResponses["200"]
       >(["connectors", connectorId]);
-      const connectorIsRunning = connector?.lastSyncStatus === "running";
+      // A just-triggered sync flips the connector status before the worker
+      // creates the run row — poll off the status so the new run shows up
+      // without a reload. Scope to the tab's run family.
+      const contentRunning = connector?.lastSyncStatus === "running";
+      const permissionRunning =
+        connector?.lastPermissionSyncStatus === "running";
+      const connectorIsRunning =
+        runType === "permission"
+          ? permissionRunning
+          : runType === "content"
+            ? contentRunning
+            : contentRunning || permissionRunning;
       return hasRunning || connectorIsRunning ? 3000 : false;
     },
   });

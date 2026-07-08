@@ -1180,16 +1180,20 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         );
       }
 
-      const [coverage, permissionSyncRunning, organization] = await Promise.all(
-        [
+      // "Running" includes a queued (pending/processing) task: a manual
+      // trigger enqueues first and the run row only appears once the worker
+      // claims it, so the task check keeps the UI live through that gap.
+      const [coverage, hasRunningRun, hasQueuedTask, organization] =
+        await Promise.all([
           KbDocumentModel.getAclCoverageByConnector(id),
           ConnectorRunModel.hasRunningRun({
             connectorId: id,
             runType: "permission",
           }),
+          TaskModel.hasPendingOrProcessing("permission_sync", id),
           OrganizationModel.getById(organizationId),
-        ],
-      );
+        ]);
+      const permissionSyncRunning = hasRunningRun || hasQueuedTask;
 
       // Effective schedule: org override, else the env default. An invalid
       // cron just yields no next-run rather than failing the endpoint.

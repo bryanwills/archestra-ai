@@ -2109,6 +2109,35 @@ describe("knowledge base routes", () => {
       expect(response.json().permissionSyncRunning).toBe(true);
     });
 
+    test("flags a queued permission sync before the worker claims a run", async ({
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const kb = await makeKnowledgeBase(organizationId);
+      const connector = await makeKnowledgeBaseConnector(
+        kb.id,
+        organizationId,
+        {
+          connectorType: "github",
+          visibility: "auto-sync-permissions",
+        },
+      );
+      // A manual trigger enqueues a task; the run row appears only when the
+      // worker claims it. The gap must still read as "running" in the UI.
+      await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/connectors/${connector.id}/permission-coverage`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().permissionSyncRunning).toBe(true);
+    });
+
     test("rejects a non-auto-sync connector with 400", async ({
       makeKnowledgeBase,
       makeKnowledgeBaseConnector,
