@@ -1019,4 +1019,44 @@ describe("ConnectorRunModel", () => {
       expect(result?.status).toBe("failed");
     });
   });
+  describe("countRunsSince", () => {
+    test("counts only the requested run family within the window", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+      makeConnectorRun,
+    }) => {
+      const org = await makeOrganization();
+      const kb = await makeKnowledgeBase(org.id);
+      const connector = await makeKnowledgeBaseConnector(kb.id, org.id);
+
+      // One recent run per family, plus a permission run outside the window.
+      await makeConnectorRun(connector.id, { startedAt: new Date() });
+      await makeConnectorRun(connector.id, {
+        startedAt: new Date(),
+        runType: "permission",
+      });
+      await makeConnectorRun(connector.id, {
+        startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        runType: "permission",
+      });
+
+      // The families never charge each other's resume budget: a connector's
+      // scheduled permission cadence must not count against content resumes.
+      expect(
+        await ConnectorRunModel.countRunsSince({
+          connectorId: connector.id,
+          seconds: 60 * 60,
+          runType: "content",
+        }),
+      ).toBe(1);
+      expect(
+        await ConnectorRunModel.countRunsSince({
+          connectorId: connector.id,
+          seconds: 60 * 60,
+          runType: "permission",
+        }),
+      ).toBe(1);
+    });
+  });
 });

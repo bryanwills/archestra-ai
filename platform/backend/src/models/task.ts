@@ -112,11 +112,17 @@ class TaskModel {
    * Bulk-recovers tasks stuck in `processing` past the timeout. Both UPDATEs
    * recheck status/started_at in their WHERE clause so a task that finished
    * (or was picked up again) between statements is never clobbered.
+   *
+   * The cutoff MUST be computed server-side (`NOW() - make_interval(...)`):
+   * `started_at` is a naked timestamp stamped with the DB clock, and a
+   * client-computed Date param is serialized in the host timezone, shifting
+   * the effective timeout by the host's UTC offset (on a UTC+2+ host every
+   * in-flight task looked stuck within one sweep tick).
    */
   static async resetStuckTasks(
     timeoutMs: number,
   ): Promise<StuckTaskTransition[]> {
-    const cutoff = new Date(Date.now() - timeoutMs);
+    const timeoutSeconds = timeoutMs / 1000;
     const timeoutError = "Task timed out (stuck in processing)";
 
     const { rows: dead } = await db.execute<StuckTaskTransition>(sql`
@@ -125,7 +131,7 @@ class TaskModel {
           last_error = ${timeoutError},
           completed_at = NOW()
       WHERE status = 'processing'
-        AND started_at < ${cutoff}
+        AND started_at < NOW() - make_interval(secs => ${timeoutSeconds})
         AND attempt >= max_attempts
       RETURNING task_type AS "taskType", periodic, status
     `);
@@ -137,7 +143,7 @@ class TaskModel {
           last_error = ${timeoutError},
           scheduled_for = NOW() + (30000 * power(2, attempt - 1)) * INTERVAL '1 millisecond'
       WHERE status = 'processing'
-        AND started_at < ${cutoff}
+        AND started_at < NOW() - make_interval(secs => ${timeoutSeconds})
         AND attempt < max_attempts
       RETURNING task_type AS "taskType", periodic, status
     `);

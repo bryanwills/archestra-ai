@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import config from "@/config";
 import db from "@/database";
 import {
+  ConnectorRunModel,
   KnowledgeBaseConnectorModel,
   OrganizationModel,
   TaskModel,
@@ -201,5 +202,84 @@ describe("handleCheckDuePermissionSyncs", () => {
 
     // Still exactly one — the handler de-duped against the active task.
     expect(await countPermissionSyncTasks(connector.id)).toBe(1);
+  });
+
+  describe("lease-based reaping", () => {
+    const EXPIRED_LEASE = () => new Date(Date.now() - 60_000);
+
+    test("reaps an expired-lease permission run and enqueues a resume within budget", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const org = await makeOrganization();
+      const kb = await makeKnowledgeBase(org.id);
+      const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+        visibility: "auto-sync-permissions",
+        connectorType: "github",
+        enabled: true,
+      });
+      // Recent last pass + NEVER_SOON schedule: the schedule branch stays
+      // quiet, so any enqueue can only come from the reaper.
+      await KnowledgeBaseConnectorModel.update(connector.id, {
+        lastPermissionSyncAt: PAST(),
+      });
+      const run = await ConnectorRunModel.create({
+        connectorId: connector.id,
+        runType: "permission",
+        status: "running",
+        startedAt: PAST(),
+        leaseExpiresAt: EXPIRED_LEASE(),
+      });
+
+      await handleCheckDuePermissionSyncs();
+
+      const reaped = await ConnectorRunModel.findById(run.id);
+      expect(reaped?.status).toBe("partial");
+      const updated = await KnowledgeBaseConnectorModel.findById(connector.id);
+      expect(updated?.lastPermissionSyncStatus).toBe("partial");
+      expect(await countPermissionSyncTasks(connector.id)).toBe(1);
+    });
+
+    test("does not auto-resume a repeatedly interrupted permission run over its budget", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+      makeConnectorRun,
+    }) => {
+      const org = await makeOrganization();
+      const kb = await makeKnowledgeBase(org.id);
+      const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+        visibility: "auto-sync-permissions",
+        connectorType: "github",
+        enabled: true,
+      });
+      await KnowledgeBaseConnectorModel.update(connector.id, {
+        lastPermissionSyncAt: PAST(),
+      });
+      // Burn the whole resume window budget with recent permission runs (a
+      // crash loop). Far above any threshold maxRunsPerResumeWindow derives.
+      for (let i = 0; i < 60; i++) {
+        await makeConnectorRun(connector.id, {
+          startedAt: new Date(),
+          runType: "permission",
+        });
+      }
+      const run = await ConnectorRunModel.create({
+        connectorId: connector.id,
+        runType: "permission",
+        status: "running",
+        startedAt: PAST(),
+        leaseExpiresAt: EXPIRED_LEASE(),
+      });
+
+      await handleCheckDuePermissionSyncs();
+
+      // Reaped (checkpoint preserved for the next scheduled pass)…
+      const reaped = await ConnectorRunModel.findById(run.id);
+      expect(reaped?.status).toBe("partial");
+      // …but NOT auto-resumed: the runaway breaker held the enqueue back.
+      expect(await countPermissionSyncTasks(connector.id)).toBe(0);
+    });
   });
 });

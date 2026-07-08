@@ -9,6 +9,7 @@ import {
   TaskModel,
 } from "@/models";
 import { taskQueueService } from "@/task-queue";
+import { withinResumeBudget } from "./connector-resume-budget";
 
 /**
  * Runtime-isolated sibling of `check_due_connectors` for the permission-sync
@@ -114,6 +115,22 @@ async function reapExpiredPermissionRuns(): Promise<void> {
     await KnowledgeBaseConnectorModel.update(run.connectorId, {
       lastPermissionSyncStatus: "partial",
     });
+
+    if (
+      !(await withinResumeBudget({
+        connectorId: run.connectorId,
+        runType: "permission",
+      }))
+    ) {
+      // Runaway: stop auto-resuming. The checkpoint is preserved, so the next
+      // scheduled pass resumes the same generation from its cursor.
+      logger.error(
+        { connectorId: run.connectorId },
+        "Permission sync is repeatedly interrupted; not auto-resuming — needs investigation",
+      );
+      continue;
+    }
+
     await taskQueueService.enqueue({
       taskType: "permission_sync",
       payload: { connectorId: run.connectorId },

@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import db, { schema } from "@/database";
 import { describe, expect, test } from "@/test";
 import { TaskTypeSchema } from "@/types";
@@ -213,6 +213,51 @@ describe("TaskModel", () => {
         .from(schema.tasksTable)
         .where(eq(schema.tasksTable.id, task.id));
       expect(updated.status).toBe("processing");
+    });
+
+    test("compares started_at against the DB clock, not the host clock", async () => {
+      // started_at is stamped with the DB clock, so both rows anchor to it via
+      // NOW(). This pins the sweep to a server-side cutoff: the old
+      // client-computed Date cutoff was serialized in the host timezone, which
+      // on a UTC+2+ host shifted the window enough to flag EVERY in-flight
+      // task (each ended up with a bogus "stuck" error and a duplicate
+      // dequeue) — while a US-timezone host would recover real zombies hours
+      // late.
+      const fresh = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: "conn-fresh" },
+      });
+      const stale = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: "conn-stale" },
+      });
+      await db.execute(sql`
+        UPDATE tasks SET status = 'processing', attempt = 1,
+          started_at = NOW() - INTERVAL '5 minutes'
+        WHERE id = ${fresh.id}
+      `);
+      await db.execute(sql`
+        UPDATE tasks SET status = 'processing', attempt = 1,
+          started_at = NOW() - INTERVAL '2 hours'
+        WHERE id = ${stale.id}
+      `);
+
+      const transitions = await TaskModel.resetStuckTasks(60 * 60 * 1000);
+
+      expect(transitions).toEqual([
+        { taskType: "permission_sync", periodic: false, status: "pending" },
+      ]);
+      const [freshRow] = await db
+        .select()
+        .from(schema.tasksTable)
+        .where(eq(schema.tasksTable.id, fresh.id));
+      expect(freshRow.status).toBe("processing");
+      expect(freshRow.lastError).toBeNull();
+      const [staleRow] = await db
+        .select()
+        .from(schema.tasksTable)
+        .where(eq(schema.tasksTable.id, stale.id));
+      expect(staleRow.status).toBe("pending");
     });
   });
 

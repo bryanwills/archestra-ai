@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { vi } from "vitest";
 import { beforeEach, describe, expect, test } from "@/test";
 
-const mockExecuteSync = vi.hoisted(() => vi.fn());
+const mockExecutePass = vi.hoisted(() => vi.fn());
 vi.mock("@/knowledge-base", () => ({
-  connectorSyncService: { executeSync: mockExecuteSync },
+  permissionSyncService: { executePass: mockExecutePass },
 }));
 
 const mockEnqueue = vi.hoisted(() => vi.fn().mockResolvedValue("task-id"));
@@ -31,9 +31,9 @@ vi.mock("@/entrypoints/_shared/log-capture", () => ({
   }),
 }));
 
-import { handleConnectorSync } from "./connector-sync-handler";
+import { handlePermissionSync } from "./permission-sync-handler";
 
-describe("handleConnectorSync", () => {
+describe("handlePermissionSync", () => {
   let connectorId: string;
 
   beforeEach(() => {
@@ -42,48 +42,43 @@ describe("handleConnectorSync", () => {
     mockWithinResumeBudget.mockResolvedValue(true);
   });
 
-  test("calls executeSync with the connector ID", async () => {
-    mockExecuteSync.mockResolvedValue({ status: "complete" });
+  test("enqueues a continuation on a partial result when within the permission-run budget", async () => {
+    mockExecutePass.mockResolvedValue({ runId: "run-1", status: "partial" });
 
-    await handleConnectorSync({ connectorId });
-
-    expect(mockExecuteSync).toHaveBeenCalledWith(
-      connectorId,
-      expect.objectContaining({
-        logger: expect.any(Object),
-        getLogOutput: expect.any(Function),
-      }),
-    );
-  });
-
-  test("enqueues a continuation on a partial result when within the run budget", async () => {
-    mockExecuteSync.mockResolvedValue({ status: "partial" });
-    mockWithinResumeBudget.mockResolvedValue(true);
-
-    await handleConnectorSync({ connectorId });
+    await handlePermissionSync({ connectorId });
 
     expect(mockWithinResumeBudget).toHaveBeenCalledWith({
       connectorId,
-      runType: "content",
+      runType: "permission",
     });
     expect(mockEnqueue).toHaveBeenCalledWith({
-      taskType: "connector_sync",
+      taskType: "permission_sync",
       payload: { connectorId },
     });
   });
 
-  test("does not enqueue a continuation when the connector is over its run budget", async () => {
-    mockExecuteSync.mockResolvedValue({ status: "partial" });
+  test("does not enqueue a continuation when the connector is over its permission-run budget", async () => {
+    // A pass that persistently fails fast ends partial every time; without the
+    // budget gate it re-enqueues itself in a hot loop with no backoff.
+    mockExecutePass.mockResolvedValue({ runId: "run-1", status: "partial" });
     mockWithinResumeBudget.mockResolvedValue(false);
 
-    await handleConnectorSync({ connectorId });
+    await handlePermissionSync({ connectorId });
+
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  test("does not enqueue a continuation on success", async () => {
+    mockExecutePass.mockResolvedValue({ runId: "run-1", status: "success" });
+
+    await handlePermissionSync({ connectorId });
 
     expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
   test("throws when connectorId is missing", async () => {
-    await expect(handleConnectorSync({})).rejects.toThrow(
-      "Missing connectorId in connector_sync payload",
+    await expect(handlePermissionSync({})).rejects.toThrow(
+      "Missing connectorId in permission_sync payload",
     );
   });
 });

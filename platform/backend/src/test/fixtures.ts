@@ -1230,6 +1230,7 @@ async function makeConnectorRun(
       | "leaseOwner"
       | "leaseExpiresAt"
       | "leaseEpoch"
+      | "runType"
     >
   > = {},
 ): Promise<ConnectorRun> {

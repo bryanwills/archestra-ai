@@ -382,16 +382,23 @@ class ConnectorRunModel {
     return result.rowCount ?? 0;
   }
 
-  /** Count runs for a connector started within the last `seconds` (crash-loop guard). */
-  static async countRunsSince(
-    connectorId: string,
-    seconds: number,
-  ): Promise<number> {
+  /**
+   * Count one family's runs for a connector started within the last `seconds`
+   * (crash-loop guard). Scoped by `runType` so the content and permission
+   * families each draw on their own resume budget — a healthy half-hourly
+   * permission cadence must not eat into the content budget, nor vice versa.
+   */
+  static async countRunsSince(params: {
+    connectorId: string;
+    seconds: number;
+    runType: ConnectorRunType;
+  }): Promise<number> {
     const { rows } = await db.execute<{ count: number }>(sql`
       SELECT COUNT(*)::int AS count
       FROM connector_runs
-      WHERE connector_id = ${connectorId}
-        AND started_at > now() - make_interval(secs => ${seconds})
+      WHERE connector_id = ${params.connectorId}
+        AND run_type = ${params.runType}
+        AND started_at > now() - make_interval(secs => ${params.seconds})
     `);
     return rows[0]?.count ?? 0;
   }
