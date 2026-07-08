@@ -25,6 +25,7 @@ export function ConnectorRunDetailsDialog({
 }: ConnectorRunDetailsDialogProps) {
   const { data: run } = useConnectorRun({ connectorId, runId });
   const formattedLogs = run?.logs ? formatConnectorRunLogs(run.logs) : null;
+  const isPermissionRun = run?.runType === "permission";
 
   return (
     <Dialog
@@ -36,19 +37,24 @@ export function ConnectorRunDetailsDialog({
       <DialogContent className="max-w-3xl">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
-            Sync Run Details
+            {isPermissionRun
+              ? "Permission Sync Run Details"
+              : "Sync Run Details"}
             {run && <ConnectorStatusBadge status={run.status} />}
           </DialogTitle>
           <DialogDescription>
-            Inspect the latest status, progress, and any connector errors for
-            this sync run.
+            {isPermissionRun
+              ? "Inspect how this pass reconciled document access with the source system's permissions."
+              : "Inspect the latest status, progress, and any connector errors for this sync run."}
           </DialogDescription>
         </DialogHeader>
 
         <DialogBody>
           {run ? (
             <div className="flex flex-col gap-4">
-              {/* Run metadata */}
+              {/* Run metadata — content runs show document/ingest progress;
+                  permission runs show ACL reconcile stats instead (their
+                  document counters are always 0). */}
               <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                 <div>
                   <span className="text-muted-foreground">Started:</span>{" "}
@@ -60,25 +66,77 @@ export function ConnectorRunDetailsDialog({
                     ? formatDate({ date: run.completedAt })
                     : "-"}
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Progress:</span>{" "}
-                  {run.documentsProcessed ?? 0}
-                  {run.totalItems != null &&
-                    run.totalItems > 0 &&
-                    ` / ${run.totalItems}`}{" "}
-                  processed
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Ingested:</span>{" "}
-                  {run.documentsIngested ?? 0}
-                </div>
-                {(run.itemErrors ?? 0) > 0 && (
+                {!isPermissionRun && (
+                  <>
+                    <div>
+                      <span className="text-muted-foreground">Progress:</span>{" "}
+                      {run.documentsProcessed ?? 0}
+                      {run.totalItems != null &&
+                        run.totalItems > 0 &&
+                        ` / ${run.totalItems}`}{" "}
+                      processed
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Ingested:</span>{" "}
+                      {run.documentsIngested ?? 0}
+                    </div>
+                  </>
+                )}
+                {isPermissionRun && run.stats && (
+                  <>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Docs scanned:
+                      </span>{" "}
+                      {run.stats.docsScanned.toLocaleString()}
+                      {run.stats.totalDocs > 0 &&
+                        ` / ${run.stats.totalDocs.toLocaleString()}`}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        ACLs changed:
+                      </span>{" "}
+                      {run.stats.aclsChanged.toLocaleString()}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Chunks rewritten:
+                      </span>{" "}
+                      {run.stats.chunksRewritten.toLocaleString()}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Fail-closed:
+                      </span>{" "}
+                      <span
+                        className={
+                          run.stats.failClosed > 0
+                            ? "text-amber-600"
+                            : undefined
+                        }
+                      >
+                        {run.stats.failClosed.toLocaleString()}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Groups:</span>{" "}
+                      {run.stats.groupsSynced.toLocaleString()}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Memberships:
+                      </span>{" "}
+                      {run.stats.membershipsUpserted.toLocaleString()}
+                    </div>
+                  </>
+                )}
+                {!isPermissionRun && (run.itemErrors ?? 0) > 0 && (
                   <div>
                     <span className="text-muted-foreground">Item errors:</span>{" "}
                     <span className="text-amber-600">{run.itemErrors}</span>
                   </div>
                 )}
-                {(run.itemsSkipped ?? 0) > 0 && (
+                {!isPermissionRun && (run.itemsSkipped ?? 0) > 0 && (
                   <div>
                     <span className="text-muted-foreground">Skipped:</span>{" "}
                     <span className="text-muted-foreground">
@@ -88,7 +146,15 @@ export function ConnectorRunDetailsDialog({
                 )}
               </div>
 
-              {(run.itemsSkipped ?? 0) > 0 && (
+              {isPermissionRun && run.stats?.contentSyncActiveDuringRun && (
+                <p className="text-xs text-muted-foreground">
+                  A content sync was still ingesting while this pass ran, so it
+                  only covered documents ingested before it started — newer
+                  documents stay access-restricted until the next pass.
+                </p>
+              )}
+
+              {!isPermissionRun && (run.itemsSkipped ?? 0) > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {run.itemsSkipped} file(s) were skipped and not indexed —
                   their file type isn&apos;t supported for the knowledge base

@@ -11,7 +11,10 @@ import {
   Play,
   Plug,
   Plus,
+  RefreshCw,
   RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -49,6 +52,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -65,10 +69,12 @@ import {
   useAssignConnectorToKnowledgeBases,
   useConnector,
   useConnectorKnowledgeBases,
+  useConnectorPermissionCoverage,
   useConnectorRuns,
   useForceResyncConnector,
   useSyncConnector,
   useTestConnectorConnection,
+  useTriggerPermissionSync,
   useUnassignConnectorFromKnowledgeBase,
 } from "@/lib/knowledge/connector.query";
 import { useKnowledgeBases } from "@/lib/knowledge/knowledge-base.query";
@@ -77,6 +83,34 @@ import { formatCronSchedule } from "@/lib/utils/format-cron";
 
 type ConnectorRunItem =
   archestraApiTypes.GetConnectorRunsResponses["200"]["data"][number];
+
+/**
+ * Phase of a RUNNING content-sync run. A content run first ingests documents,
+ * then drains its queued embedding batches — `totalBatches` is only set once
+ * the ingest loop finishes, which makes it the phase discriminator. Surfacing
+ * the embedding phase matters: during a long drain the Processed count sits
+ * frozen at the total, which otherwise reads as a hang.
+ */
+function contentRunPhase(
+  run: ConnectorRunItem,
+): { label: string; progress: number | null } | null {
+  if (run.status !== "running" || run.runType !== "content") return null;
+  const totalBatches = run.totalBatches ?? 0;
+  if (totalBatches > 0) {
+    const completed = run.completedBatches ?? 0;
+    return {
+      label: `embedding · ${completed}/${totalBatches} batches`,
+      progress: Math.min(100, Math.round((completed / totalBatches) * 100)),
+    };
+  }
+  const total = run.totalItems ?? 0;
+  const processed = run.documentsProcessed ?? 0;
+  return {
+    label: "ingesting documents",
+    progress:
+      total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : null,
+  };
+}
 
 export default function ConnectorDetailPage({
   connectorId,
@@ -175,7 +209,22 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
-        return <ConnectorStatusBadge status={row.original.status} />;
+        const run = row.original;
+        const phase = contentRunPhase(run);
+        if (!phase) return <ConnectorStatusBadge status={run.status} />;
+        return (
+          <div className="space-y-1">
+            <ConnectorStatusBadge status={run.status} />
+            <div className="flex items-center gap-2">
+              {phase.progress !== null && (
+                <Progress value={phase.progress} className="h-1 w-16" />
+              )}
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {phase.label}
+              </span>
+            </div>
+          </div>
+        );
       },
     },
     {
@@ -204,10 +253,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       header: "Processed",
       cell: ({ row }) => {
         const processed = row.original.documentsProcessed ?? 0;
-        // totalItems will be available after codegen
-        const total = (row.original as Record<string, unknown>).totalItems as
-          | number
-          | null;
+        const total = row.original.totalItems;
         return (
           <div>
             {processed}
@@ -245,6 +291,109 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         );
       },
     },
+  ];
+
+  // Permission runs get family-relevant columns: the content counters
+  // (Processed/Ingested) are always 0 for them; what matters is how much of
+  // the corpus was scanned, what changed, and what fail-closed.
+  const permissionColumns: ColumnDef<ConnectorRunItem>[] = [
+    {
+      id: "status",
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => {
+        const run = row.original;
+        return (
+          <div className="space-y-1">
+            <ConnectorStatusBadge status={run.status} />
+            {run.stats?.contentSyncActiveDuringRun && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="text-xs font-normal">
+                    during content sync
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  A content sync was still ingesting when this pass ran.
+                  Documents ingested after it started stay access-restricted
+                  until the next pass.
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: "startedAt",
+      accessorKey: "startedAt",
+      header: "Started",
+      cell: ({ row }) => (
+        <div className="font-mono text-xs">
+          {formatDate({ date: row.original.startedAt })}
+        </div>
+      ),
+    },
+    {
+      id: "completedAt",
+      header: "Completed",
+      cell: ({ row }) => (
+        <div className="font-mono text-xs">
+          {row.original.completedAt
+            ? formatDate({ date: row.original.completedAt })
+            : "-"}
+        </div>
+      ),
+    },
+    {
+      id: "docsScanned",
+      header: "Docs scanned",
+      cell: ({ row }) => {
+        const stats = row.original.stats;
+        if (!stats) return <div className="text-muted-foreground">-</div>;
+        return (
+          <div>
+            {stats.docsScanned.toLocaleString()}
+            {stats.totalDocs > 0 && (
+              <span className="text-muted-foreground">
+                {" "}
+                / {stats.totalDocs.toLocaleString()}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: "aclsChanged",
+      header: "ACLs changed",
+      cell: ({ row }) => (
+        <div>{row.original.stats?.aclsChanged.toLocaleString() ?? "-"}</div>
+      ),
+    },
+    {
+      id: "failClosed",
+      header: "Fail-closed",
+      cell: ({ row }) => {
+        const failClosed = row.original.stats?.failClosed;
+        if (failClosed == null)
+          return <div className="text-muted-foreground">-</div>;
+        return (
+          <div className={failClosed > 0 ? "text-amber-600" : undefined}>
+            {failClosed.toLocaleString()}
+          </div>
+        );
+      },
+    },
+    {
+      id: "groupsSynced",
+      header: "Groups",
+      cell: ({ row }) => (
+        <div>{row.original.stats?.groupsSynced.toLocaleString() ?? "-"}</div>
+      ),
+    },
+    // Reuse the content table's logs column (same details dialog).
+    columns[columns.length - 1],
   ];
 
   if (isPending) {
@@ -418,6 +567,8 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
           </div>
         </div>
 
+        {isAutoSync && <PermissionCoverageBanner connectorId={connectorId} />}
+
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
         ) : (
@@ -433,7 +584,9 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
               </div>
             ) : (
               <DataTable
-                columns={columns}
+                columns={
+                  currentTab === "permission-runs" ? permissionColumns : columns
+                }
                 data={runsData?.data ?? []}
                 manualPagination={true}
                 pagination={{
@@ -460,6 +613,78 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         />
       </div>
     </PageLayout>
+  );
+}
+
+/**
+ * Live ACL coverage for an auto-sync-permissions connector. Answers "is
+ * everything ingested reconciled right now?" directly instead of leaving the
+ * admin to infer it from run history: shows tagged vs fail-closed counts, the
+ * next scheduled pass, and a manual trigger for agency over the gap.
+ */
+function PermissionCoverageBanner({ connectorId }: { connectorId: string }) {
+  const { data: coverage } = useConnectorPermissionCoverage({
+    connectorId,
+    enabled: true,
+  });
+  const triggerPermissionSync = useTriggerPermissionSync();
+
+  if (!coverage || coverage.totalDocuments === 0) return null;
+
+  const pending = coverage.failClosedDocuments;
+  const tagged = coverage.totalDocuments - pending;
+  const fullyCovered = pending === 0;
+
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-4 text-sm ${
+        fullyCovered ? "" : "border-amber-500/40 bg-amber-500/5"
+      }`}
+    >
+      {fullyCovered ? (
+        <ShieldCheck className="h-4 w-4 shrink-0 text-green-600" />
+      ) : (
+        <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+      )}
+      <div className="min-w-0">
+        <span className="font-medium">Permissions coverage:</span>{" "}
+        {fullyCovered ? (
+          <>
+            {tagged.toLocaleString()} /{" "}
+            {coverage.totalDocuments.toLocaleString()} documents tagged
+          </>
+        ) : (
+          <>
+            {pending.toLocaleString()} document{pending === 1 ? "" : "s"}{" "}
+            awaiting permission sync (access-restricted until tagged)
+          </>
+        )}
+      </div>
+      <div className="ml-auto flex items-center gap-3">
+        {coverage.permissionSyncRunning ? (
+          <span className="text-muted-foreground">
+            Permission sync running…
+          </span>
+        ) : (
+          coverage.nextScheduledAt && (
+            <span className="text-muted-foreground">
+              Next pass: {formatDate({ date: coverage.nextScheduledAt })}
+            </span>
+          )
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => triggerPermissionSync.mutate(connectorId)}
+          disabled={
+            triggerPermissionSync.isPending || coverage.permissionSyncRunning
+          }
+        >
+          <RefreshCw className="h-4 w-4" />
+          {coverage.permissionSyncRunning ? "Syncing…" : "Sync permissions now"}
+        </Button>
+      </div>
+    </div>
   );
 }
 

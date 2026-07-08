@@ -73,4 +73,49 @@ describe("ConnectorRunDetailsDialog", () => {
       '{"msg":"value }{ inside string"}\n{"msg":"next record"}',
     );
   });
+
+  it("shows ACL reconcile stats instead of document counters for a permission run", () => {
+    mockUseConnectorRun.mockReturnValue({
+      data: {
+        status: "success",
+        runType: "permission",
+        startedAt: "2026-07-08T14:46:36.000Z",
+        completedAt: "2026-07-08T14:50:14.000Z",
+        documentsProcessed: 0,
+        documentsIngested: 0,
+        totalItems: null,
+        stats: {
+          totalDocs: 22915,
+          docsScanned: 22915,
+          aclsChanged: 13831,
+          chunksRewritten: 14000,
+          failClosed: 3,
+          groupsSynced: 6,
+          membershipsUpserted: 6,
+          contentSyncActiveDuringRun: true,
+        },
+        logs: null,
+      },
+    });
+
+    render(
+      <ConnectorRunDetailsDialog
+        connectorId="connector-1"
+        runId="run-1"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Permission Sync Run Details")).toBeInTheDocument();
+    expect(screen.getByText("Docs scanned:")).toBeInTheDocument();
+    expect(screen.getByText("ACLs changed:")).toBeInTheDocument();
+    expect(screen.getByText("13,831")).toBeInTheDocument();
+    // Content counters are hidden — they are always 0 for permission runs.
+    expect(screen.queryByText("Progress:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ingested:")).not.toBeInTheDocument();
+    // The during-backfill note explains partial coverage.
+    expect(
+      screen.getByText(/only covered documents ingested before it started/),
+    ).toBeInTheDocument();
+  });
 });

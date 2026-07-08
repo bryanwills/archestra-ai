@@ -19,6 +19,8 @@ const {
   testConnectorConnection,
   getConnectorRuns,
   getConnectorRun,
+  triggerPermissionSync,
+  getPermissionSyncCoverage,
   assignConnectorToKnowledgeBases,
   unassignConnectorFromKnowledgeBase,
   getConnectorKnowledgeBases,
@@ -269,6 +271,65 @@ export function useTestConnectorConnection() {
         });
         toast.error(data.error || "Connection test failed");
       }
+    },
+  });
+}
+
+export function useTriggerPermissionSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectorId: string) => {
+      const { data, error } = await triggerPermissionSync({
+        path: { id: connectorId },
+      });
+      if (error) {
+        handleApiError(error);
+        return null;
+      }
+      return data;
+    },
+    onSuccess: (data, connectorId) => {
+      if (!data) return;
+      queryClient.invalidateQueries({
+        queryKey: ["connectors", connectorId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["connectors", connectorId, "runs"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["connectors", connectorId, "permission-coverage"],
+      });
+      toast.success("Permission sync started");
+    },
+  });
+}
+
+/**
+ * Live ACL coverage for an auto-sync-permissions connector: how many ingested
+ * documents are tagged vs still fail-closed. Polls while a pass is running or
+ * documents are still awaiting one, so the header stat converges on its own.
+ */
+export function useConnectorPermissionCoverage(params: {
+  connectorId: string;
+  enabled: boolean;
+}) {
+  const { connectorId, enabled } = params;
+  return useQuery({
+    queryKey: ["connectors", connectorId, "permission-coverage"],
+    queryFn: async () => {
+      const { data, error } = await getPermissionSyncCoverage({
+        path: { id: connectorId },
+      });
+      throwOnApiError(error, { allowNotFound: true, toastOnError: false });
+      return data ?? null;
+    },
+    enabled: enabled && !!connectorId,
+    refetchInterval: (query) => {
+      const coverage = query.state.data;
+      return coverage?.permissionSyncRunning ||
+        (coverage?.failClosedDocuments ?? 0) > 0
+        ? 5000
+        : false;
     },
   });
 }
