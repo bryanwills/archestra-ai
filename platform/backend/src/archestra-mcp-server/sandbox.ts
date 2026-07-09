@@ -1430,7 +1430,13 @@ async function resolveEnvironmentTarget(
     organizationId,
   );
   if (!environment) {
-    throw new Error(
+    // SkillSandboxError reaches the caller verbatim; a plain Error is flattened
+    // to "an internal error", stranding whoever has to fix the deployment.
+    logger.error(
+      { agentId, environmentId: agent.environmentId, organizationId },
+      "[Sandbox] bound agent's environment was not found",
+    );
+    throw new SkillSandboxError(
       `Agent is bound to environment ${agent.environmentId}, which was not found — refusing to run on the shared runtime.`,
     );
   }
@@ -1439,7 +1445,11 @@ async function resolveEnvironmentTarget(
       environment,
     );
   if (!target) {
-    throw new Error(
+    logger.error(
+      { agentId, environmentId: environment.id, organizationId },
+      "[Sandbox] could not resolve the isolated runtime for a bound agent",
+    );
+    throw new SkillSandboxError(
       `Could not resolve the isolated runtime for environment "${environment.name}" — refusing to run on the shared runtime. Is the orchestrator (Kubernetes) configured?`,
     );
   }
