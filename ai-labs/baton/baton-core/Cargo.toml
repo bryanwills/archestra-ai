@@ -14,6 +14,7 @@ thiserror = "2"
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "ansi"] }
 proptest = "1"
+clap = { version = "4", features = ["derive"] }
 
 [lints]
 workspace = true

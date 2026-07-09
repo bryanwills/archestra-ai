@@ -339,6 +339,7 @@ dependencies = [
 name = "baton-core"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "enumset",
  "proptest",
  "serde",
