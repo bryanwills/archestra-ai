@@ -127,9 +127,45 @@ describe("ConnectorUserGroupsTable", () => {
     // unresolvable human.
     expect(screen.getByText("Unresolved")).toBeInTheDocument();
     expect(
-      screen.getByText("1 email hidden · 1 no matching user"),
+      screen.getByText("email hidden: 1 · no matching user: 1"),
     ).toBeInTheDocument();
     expect(screen.getByText("+ 1 app account")).toBeInTheDocument();
+  });
+
+  it("omits zero-count unresolved reasons from the detail line", () => {
+    mockUseConnectorUserGroups.mockReturnValue({
+      data: {
+        groups: [
+          {
+            groupId: "engineers",
+            token: "group:jira_engineers",
+            documentCount: 1,
+            lastSyncedAt: "2026-07-08T15:00:00.000Z",
+            members: [
+              {
+                accountId: "acc-dave",
+                displayName: "Dave D",
+                email: null,
+                accountType: null,
+                user: null,
+              },
+            ],
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    render(
+      <ConnectorUserGroupsTable
+        connectorId="connector-1"
+        connectorType="jira"
+      />,
+    );
+
+    expect(screen.getByText("email hidden: 1")).toBeInTheDocument();
+    expect(screen.queryByText(/no matching user/)).not.toBeInTheDocument();
   });
 
   it("diagnoses unresolved members with the credential-scope hint and the invite path", () => {
@@ -142,10 +178,16 @@ describe("ConnectorUserGroupsTable", () => {
       />,
     );
 
-    // Hidden emails are a credential-visibility property of the source.
-    expect(screen.getByText(/1 member can't be resolved/)).toBeInTheDocument();
+    // Two sentences: what is wrong, then the per-source fix.
     expect(
-      screen.getByText(/Atlassian Cloud only returns/),
+      screen.getByText(/1 member can't get document access/),
+    ).toBeInTheDocument();
+    // The source is named dynamically per connector type.
+    expect(
+      screen.getByText(/because Jira hides their email/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/profile email visibility to "Anyone"/),
     ).toBeInTheDocument();
     // Visible email but no account → inviting the user closes the gap.
     expect(
@@ -240,7 +282,7 @@ describe("ConnectorUserGroupsTable", () => {
     expect(screen.queryByText("ghosts")).not.toBeInTheDocument();
   });
 
-  it("explains the email-based mapping and shows an empty state before the first sync", () => {
+  it("shows an empty state before the first sync", () => {
     mockUseConnectorUserGroups.mockReturnValue({
       data: { groups: [] },
       isPending: false,
@@ -254,9 +296,6 @@ describe("ConnectorUserGroupsTable", () => {
       />,
     );
 
-    expect(
-      screen.getByText(/Members resolve to Archestra users by email/),
-    ).toBeInTheDocument();
     expect(screen.getByText(/No user groups synced yet/)).toBeInTheDocument();
   });
 });

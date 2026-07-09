@@ -1,12 +1,11 @@
 "use client";
 
 import type { archestraApiTypes, ConnectorType } from "@archestra/shared";
-import { DocsPage, getDocsUrl } from "@archestra/shared";
+import { CONNECTOR_TYPE_LABELS, DocsPage, getDocsUrl } from "@archestra/shared";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import { Users } from "lucide-react";
 import { useMemo, useState } from "react";
-import { getPermissionSyncCredentialNote } from "@/app/knowledge/knowledge-bases/_parts/connector-dialog-config";
 import { SearchInput } from "@/components/search-input";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
@@ -135,12 +134,6 @@ export function ConnectorUserGroupsTable({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Group membership synced from the source system. Members resolve to
-        Archestra users by email — teams do not affect auto-synced permissions.
-        Groups that gate documents but resolve to nobody sort first.
-      </p>
-
       {groups.length > 0 && <MemberStatsStrip stats={stats} />}
 
       {stats.hiddenEmail > 0 && (
@@ -239,6 +232,19 @@ function isServiceAccount(member: ConnectorUserGroupMember): boolean {
   return member.accountType === "app";
 }
 
+/** "email hidden: 7 · no matching user: 2" — zero-count reasons omitted. */
+function unresolvedDetail(stats: MemberStats): string | undefined {
+  const parts = [
+    ...(stats.hiddenEmail > 0
+      ? [`email hidden: ${stats.hiddenEmail.toLocaleString()}`]
+      : []),
+    ...(stats.noMatchingUser > 0
+      ? [`no matching user: ${stats.noMatchingUser.toLocaleString()}`]
+      : []),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 function MemberStatsStrip({ stats }: { stats: MemberStats }) {
   const unresolved = stats.hiddenEmail + stats.noMatchingUser;
   return (
@@ -256,16 +262,12 @@ function MemberStatsStrip({ stats }: { stats: MemberStats }) {
       <StatBlock
         label="Resolved"
         value={stats.resolved.toLocaleString()}
-        detail="map to an Archestra user"
+        detail={stats.resolved === 1 ? "Archestra user" : "Archestra users"}
       />
       <StatBlock
         label="Unresolved"
         value={unresolved.toLocaleString()}
-        detail={
-          unresolved > 0
-            ? `${stats.hiddenEmail.toLocaleString()} email hidden · ${stats.noMatchingUser.toLocaleString()} no matching user`
-            : undefined
-        }
+        detail={unresolvedDetail(stats)}
         warn={unresolved > 0}
       />
     </div>
@@ -295,10 +297,8 @@ function StatBlock({
 }
 
 /**
- * Turns the unresolved counts into a diagnosis + fix. A large hidden-email
- * count is a property of the connector credential's view of the source (not
- * of Archestra), so the hint explains the per-source visibility rule and what
- * an admin can change.
+ * Two sentences, per the house style for notices: what is wrong, how to fix
+ * it. The docs link carries the full per-source visibility rules.
  */
 function UnresolvedMembersHint({
   connectorType,
@@ -309,26 +309,23 @@ function UnresolvedMembersHint({
   hiddenEmail: number;
   noMatchingUser: number;
 }) {
-  const credentialNote = getPermissionSyncCredentialNote(connectorType);
   return (
     <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
       <p>
         <span className="font-medium">
           {hiddenEmail.toLocaleString()} member
-          {hiddenEmail === 1 ? "" : "s"} can&apos;t be resolved
+          {hiddenEmail === 1 ? "" : "s"} can&apos;t get document access
         </span>{" "}
-        because the source system hides their email from this connector&apos;s
-        credential.
-        {credentialNote ? ` ${credentialNote}` : ""} Once an email becomes
-        visible, the next permission sync resolves that member automatically.
+        because {CONNECTOR_TYPE_LABELS[connectorType] ?? connectorType} hides
+        their email from this connector&apos;s credential.{" "}
+        {hiddenEmailFix(connectorType)}
       </p>
       {noMatchingUser > 0 && (
         <p>
           {noMatchingUser.toLocaleString()} member
-          {noMatchingUser === 1 ? " has a" : "s have"} visible email
-          {noMatchingUser === 1 ? "" : "s"} but no matching Archestra user —
-          invite them with the same email and they get their access on first
-          login, no extra sync needed.
+          {noMatchingUser === 1 ? "" : "s"} with a visible email{" "}
+          {noMatchingUser === 1 ? "has" : "have"} no Archestra account — invite
+          them with the same email and their access works from first login.
         </p>
       )}
       <a
@@ -341,6 +338,18 @@ function UnresolvedMembersHint({
       </a>
     </div>
   );
+}
+
+function hiddenEmailFix(connectorType: ConnectorType): string {
+  switch (connectorType) {
+    case "jira":
+    case "confluence":
+      return 'Ask an Atlassian organization admin to set those accounts’ profile email visibility to "Anyone" — the next sync resolves them automatically.';
+    case "github":
+      return "Ask those users to add a public email to their GitHub profile — the next sync resolves them automatically.";
+    default:
+      return "Once the source makes their emails visible, the next sync resolves them automatically.";
+  }
 }
 
 /**
