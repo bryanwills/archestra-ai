@@ -139,12 +139,13 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       : "Back to Connectors";
   const tabParam = searchParams.get("tab");
   // "permission-runs" is a legacy deep link from when permission runs had
-  // their own tab; it lands on the merged Sync Runs tab pre-filtered.
+  // their own tab (lands on the merged Sync Runs tab pre-filtered);
+  // "user-groups" is the Permissions tab's pre-rename deep link.
   const currentTab =
     tabParam === "documents"
       ? "documents"
-      : tabParam === "user-groups"
-        ? "user-groups"
+      : tabParam === "permissions" || tabParam === "user-groups"
+        ? "permissions"
         : "runs";
 
   const {
@@ -167,8 +168,8 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     ...(isAutoSync
       ? [
           {
-            label: "User Groups",
-            href: `/knowledge/connectors/${connectorId}?tab=user-groups`,
+            label: "Permissions",
+            href: `/knowledge/connectors/${connectorId}?tab=permissions`,
           },
         ]
       : []),

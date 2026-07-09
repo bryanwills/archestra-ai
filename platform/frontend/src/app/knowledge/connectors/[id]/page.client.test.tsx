@@ -143,14 +143,15 @@ describe("ConnectorDetailPage", () => {
       expect(
         screen.getByRole("tab", { name: "Permissions" }),
       ).toBeInTheDocument();
-      // Group visibility is auto-sync-only.
-      const userGroupTabs = screen.getAllByRole("link", {
-        name: "User Groups",
+      // Group visibility is auto-sync-only; the tab is named for what it
+      // shows users (Permissions), distinct from the runs-family filter tab.
+      const permissionsTabs = screen.getAllByRole("link", {
+        name: "Permissions",
       });
-      expect(userGroupTabs.length).toBeGreaterThan(0);
-      expect(userGroupTabs[0]).toHaveAttribute(
+      expect(permissionsTabs.length).toBeGreaterThan(0);
+      expect(permissionsTabs[0]).toHaveAttribute(
         "href",
-        `/knowledge/connectors/${CONNECTOR_ID}?tab=user-groups`,
+        `/knowledge/connectors/${CONNECTOR_ID}?tab=permissions`,
       );
     });
 
@@ -168,7 +169,7 @@ describe("ConnectorDetailPage", () => {
         screen.queryAllByRole("link", { name: "Permission Sync Runs" }),
       ).toHaveLength(0);
       expect(
-        screen.queryAllByRole("link", { name: "User Groups" }),
+        screen.queryAllByRole("link", { name: "Permissions" }),
       ).toHaveLength(0);
       expect(
         screen.getAllByRole("link", { name: "Sync Runs" }).length,
