@@ -52,9 +52,22 @@ describe("AclBadges", () => {
       />,
     );
     expect(screen.getByText("Everyone in org")).toBeInTheDocument();
-    expect(screen.getByText("+2")).toBeInTheDocument();
+    expect(screen.getByText("+2 more")).toBeInTheDocument();
     // Hidden entries stay discoverable in the overflow tooltip.
     expect(screen.getByText("Group: jira_engineers")).toBeInTheDocument();
     expect(screen.getByText("Group: jira_admins")).toBeInTheDocument();
+  });
+
+  it("collapses very large ACLs into +N more with every entry in the tooltip", () => {
+    const acl = Array.from(
+      { length: 1000 },
+      (_, i) => `user_email:user${i}@example.com`,
+    );
+    render(<AclBadges acl={acl} />);
+    // 3 visible on one line + 997 behind the overflow badge…
+    expect(screen.getByText("+997 more")).toBeInTheDocument();
+    // …whose (scrollable) tooltip lists ALL collapsed entries.
+    expect(screen.getByText("user17@example.com")).toBeInTheDocument();
+    expect(screen.getByText("user999@example.com")).toBeInTheDocument();
   });
 });

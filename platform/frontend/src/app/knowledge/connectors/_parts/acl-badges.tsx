@@ -11,12 +11,15 @@ import { useTeams } from "@/lib/teams/team.query";
 const MAX_VISIBLE_ENTRIES = 3;
 
 /**
- * Human-readable rendering of a document's ACL. Every entry kind the backend
- * writes is covered: `org:*`, `team:<id>` (resolved to the team name),
- * `user_email:<email>`, `group:<connectorType>_<groupId>`, and the empty ACL
- * (fail-closed — nobody can retrieve the document until a permission sync
- * tags it). Raw tokens stay available on hover for correlation with the
- * User Groups tab.
+ * Human-readable rendering of a document's ACL, styled after the Models
+ * column on the LLM limits table: a single line of outline badges, with
+ * everything past the first few collapsed into a "+N more" badge whose
+ * tooltip lists all collapsed entries (scrollable — an auto-sync ACL can
+ * carry hundreds). Every entry kind the backend writes is covered: `org:*`,
+ * `team:<id>` (resolved to the team name), `user_email:<email>`,
+ * `group:<connectorType>_<groupId>`, and the empty ACL (fail-closed — nobody
+ * can retrieve the document until a permission sync tags it). Raw tokens stay
+ * available on hover for correlation with the User Groups tab.
  */
 export function AclBadges({ acl }: { acl: string[] }) {
   const { data: teams } = useTeams();
@@ -27,7 +30,7 @@ export function AclBadges({ acl }: { acl: string[] }) {
         <TooltipTrigger asChild>
           <Badge
             variant="outline"
-            className="border-amber-600 text-amber-600 whitespace-nowrap"
+            className="border-amber-600 text-amber-600 text-xs whitespace-nowrap"
           >
             Fail-closed
           </Badge>
@@ -48,12 +51,12 @@ export function AclBadges({ acl }: { acl: string[] }) {
   const hidden = entries.slice(MAX_VISIBLE_ENTRIES);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden">
       {visible.map(({ entry, label }) => (
         <Badge
           key={entry}
-          variant="secondary"
-          className="max-w-[180px] font-normal"
+          variant="outline"
+          className="min-w-0 shrink text-xs font-normal"
           title={entry}
         >
           <span className="truncate">{label}</span>
@@ -62,14 +65,17 @@ export function AclBadges({ acl }: { acl: string[] }) {
       {hidden.length > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="outline" className="font-normal">
-              +{hidden.length}
+            <Badge
+              variant="outline"
+              className="shrink-0 cursor-default text-xs font-normal"
+            >
+              +{hidden.length} more
             </Badge>
           </TooltipTrigger>
-          <TooltipContent className="max-w-xs">
-            <div className="flex flex-col gap-0.5">
+          <TooltipContent className="max-w-80">
+            <div className="max-h-64 space-y-1 overflow-y-auto">
               {hidden.map(({ entry, label }) => (
-                <span key={entry}>{label}</span>
+                <div key={entry}>{label}</div>
               ))}
             </div>
           </TooltipContent>
