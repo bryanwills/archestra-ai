@@ -68,9 +68,10 @@ fn effects_deserialization_denies_an_unknown_effect() {
     let json = serde_json::to_string(&effects).unwrap();
     // The legible list form round-trips.
     assert_eq!(effects, serde_json::from_str::<Effects>(&json).unwrap());
-    // An unrecognized effect fails deserialization closed rather than being
-    // silently dropped to a weaker set.
-    let tampered = json.replace("Egress", "Teleport");
+    // An unrecognized effect fails deserialization closed (the list repr
+    // deserializes each element via Effect's own Deserialize, which rejects an
+    // unknown variant) rather than being silently dropped to a weaker set.
+    let tampered = json.replace("egress", "teleport");
     assert!(serde_json::from_str::<Effects>(&tampered).is_err());
 }
 

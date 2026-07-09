@@ -201,10 +201,14 @@ impl fmt::Display for Trust {
 /// `EnumSetType` gives the fixed-variant set a `u8`-bitset representation
 /// (`EnumSet<Effect>`) — it also provides `Copy`/`Clone`/`PartialEq`/`Eq`, so
 /// those are intentionally absent from the derive list. `serialize_repr =
-/// "list"` keeps the JSON legible (`["mutation", …]`) and `serialize_deny_unknown`
-/// makes an unrecognized effect fail deserialization closed rather than drop.
+/// "list"` with `rename_all = "lowercase"` makes `EnumSet<Effect>` serialize as
+/// a legible `["mutation", …]` (matching the `Display` form). Under the list
+/// repr an unrecognized effect is rejected by `Effect`'s own derived
+/// `Deserialize`, so a malformed or forward-version list fails closed rather
+/// than dropping to a weaker set.
 #[derive(EnumSetType, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[enumset(serialize_repr = "list", serialize_deny_unknown)]
+#[enumset(serialize_repr = "list")]
+#[serde(rename_all = "lowercase")]
 pub enum Effect {
     Mutation,
     Egress,
