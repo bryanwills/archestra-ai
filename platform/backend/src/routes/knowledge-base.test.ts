@@ -2307,7 +2307,8 @@ describe("knowledge base routes", () => {
         },
       );
 
-      // alice is an org member (resolves); bob has no account (resolves to nobody).
+      // alice is an org member (resolves); bob has no account (resolves to
+      // nobody); dave's email is hidden upstream (recorded, fail-closed).
       const alice = await makeUser({ email: "Alice@Example.com" });
       await makeMember(alice.id, organizationId);
       await KbExternalUserGroupModel.upsertMany([
@@ -2316,6 +2317,8 @@ describe("knowledge base routes", () => {
           connectorId: connector.id,
           connectorType: "github",
           groupId: "engineers",
+          externalAccountId: "alice",
+          displayName: "Alice A",
           memberEmail: "alice@example.com",
         },
         {
@@ -2323,7 +2326,18 @@ describe("knowledge base routes", () => {
           connectorId: connector.id,
           connectorType: "github",
           groupId: "engineers",
+          externalAccountId: "bob",
+          displayName: "Bob B",
           memberEmail: "bob@example.com",
+        },
+        {
+          organizationId,
+          connectorId: connector.id,
+          connectorType: "github",
+          groupId: "engineers",
+          externalAccountId: "dave",
+          displayName: "Dave D",
+          memberEmail: null,
         },
       ]);
       // Two docs grant the group, one grants only an unknown group.
@@ -2372,10 +2386,19 @@ describe("knowledge base routes", () => {
       expect(engineers.lastSyncedAt).toEqual(expect.any(String));
       expect(engineers.members).toEqual([
         {
+          accountId: "alice",
+          displayName: "Alice A",
           email: "alice@example.com",
           user: { id: alice.id, name: alice.name },
         },
-        { email: "bob@example.com", user: null },
+        {
+          accountId: "bob",
+          displayName: "Bob B",
+          email: "bob@example.com",
+          user: null,
+        },
+        // Hidden email: recorded and visible to admins, resolves to nobody.
+        { accountId: "dave", displayName: "Dave D", email: null, user: null },
       ]);
 
       // Granted on a document but absent from the snapshot: visible, no members.
@@ -2417,6 +2440,7 @@ describe("knowledge base routes", () => {
           connectorId: connector.id,
           connectorType: "github",
           groupId: "engineers",
+          externalAccountId: "carol@example.com",
           memberEmail: "carol@example.com",
         },
       ]);
@@ -2429,7 +2453,12 @@ describe("knowledge base routes", () => {
       expect(response.statusCode).toBe(200);
       const { groups } = response.json();
       expect(groups[0].members).toEqual([
-        { email: "carol@example.com", user: null },
+        {
+          accountId: "carol@example.com",
+          displayName: null,
+          email: "carol@example.com",
+          user: null,
+        },
       ]);
     });
 

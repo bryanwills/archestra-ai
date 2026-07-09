@@ -670,13 +670,26 @@ export interface DocumentPermissionsYield {
 }
 
 /**
- * One upstream group expanded to its member emails, yielded by `syncGroups`.
+ * One upstream group member. EVERY member is yielded, whether or not the
+ * upstream exposes their email — `email` is null when hidden (the member is
+ * then recorded fail-closed and surfaced to admins as unresolvable, instead of
+ * silently dropped).
+ */
+export interface GroupMemberYield {
+  /** Stable upstream principal id (Jira/Confluence accountId, GitHub login). */
+  accountId: string;
+  displayName: string | null;
+  email: string | null;
+}
+
+/**
+ * One upstream group expanded to its members, yielded by `syncGroups`.
  * `groupId` MUST byte-match the id encoded in the document's
  * `group:<source>_<groupId>` token — the groupId data-contract.
  */
 export interface GroupMembershipYield {
   groupId: string;
-  memberEmails: string[];
+  members: GroupMemberYield[];
   cursor?: string;
 }
 

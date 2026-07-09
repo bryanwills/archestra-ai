@@ -10,6 +10,7 @@ import type {
   DocumentPermissions,
   DocumentPermissionsYield,
   GroupMembershipYield,
+  GroupMemberYield,
   PermissionSyncParams,
 } from "@/types";
 
@@ -381,7 +382,7 @@ export class ConfluenceConnector extends BaseConnector {
   }
 
   /**
-   * Confluence groups → member emails. Group ids are the group name, matching
+   * Confluence groups → members. Group ids are the group name, matching
    * the `group.name` written on documents from read-restrictions.
    */
   async *syncGroups(
@@ -393,33 +394,42 @@ export class ConfluenceConnector extends BaseConnector {
     }
     const client = createConfluenceClient(config, params.credentials, this.log);
 
-    // Accumulate every resolvable member across all real groups so the synthetic
+    // Accumulate every member across all real groups so the synthetic
     // "any logged-in user" group (emitted last) can grant a doc readable by all
     // authenticated users. Built-in all-users groups are folded into the
     // synthetic id rather than stored under their raw name.
-    const allMemberEmails = new Set<string>();
+    const allMembers = new Map<string, GroupMemberYield>();
 
     for await (const group of this.paginate(client, "/api/group")) {
-      const memberEmails: string[] = [];
+      const members: GroupMemberYield[] = [];
       for await (const member of this.paginate(
         client,
         `/api/group/member?name=${encodeURIComponent(group.name)}`,
       )) {
+        // Every member is recorded; a hidden email yields `email: null`
+        // (fail-closed at resolution, visible to admins as unresolvable).
+        const accountId =
+          member?.accountId ?? member?.username ?? member?.userKey;
+        if (!accountId) continue; // no stable identity at all — nothing to record
         const email = await this.resolveConfluenceEmail(client, member);
-        if (email) {
-          memberEmails.push(email);
-          allMemberEmails.add(email);
-        }
+        const entry: GroupMemberYield = {
+          accountId: String(accountId),
+          displayName: member?.displayName ?? member?.publicName ?? null,
+          email,
+        };
+        members.push(entry);
+        allMembers.set(entry.accountId, entry);
       }
       const groupId = this.mapConfluenceGroupName(group.name);
-      yield { groupId, memberEmails, cursor: group.name };
+      yield { groupId, members, cursor: group.name };
     }
 
     // Synthetic all-members group: models "any logged-in user". Fail-closed —
-    // only members whose email actually resolved are granted.
+    // only members whose email actually resolved are granted access; the rest
+    // are recorded as unresolvable.
     yield {
       groupId: CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID,
-      memberEmails: [...allMemberEmails],
+      members: [...allMembers.values()],
       cursor: CONFLUENCE_ANY_LOGGED_IN_USER_GROUP_ID,
     };
   }

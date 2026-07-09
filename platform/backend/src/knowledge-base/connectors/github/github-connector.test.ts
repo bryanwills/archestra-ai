@@ -1327,7 +1327,7 @@ describe("GithubConnector", () => {
       ]);
     });
 
-    test("syncGroups expands org teams to member emails", async () => {
+    test("syncGroups expands org teams to members (email null when private)", async () => {
       mockReposGet.mockResolvedValue({
         data: { default_branch: "main" },
       });
@@ -1355,7 +1355,15 @@ describe("GithubConnector", () => {
       expect(yields).toEqual([
         {
           groupId: "test-org/eng",
-          memberEmails: ["alice@example.com"],
+          members: [
+            {
+              accountId: "alice",
+              displayName: null,
+              email: "alice@example.com",
+            },
+            // bob's email is private — recorded fail-closed, not dropped.
+            { accountId: "bob", displayName: null, email: null },
+          ],
           cursor: "test-org/eng",
         },
       ]);

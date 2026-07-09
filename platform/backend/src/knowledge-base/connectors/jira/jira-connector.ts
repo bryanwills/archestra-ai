@@ -14,6 +14,7 @@ import type {
   DocumentPermissions,
   DocumentPermissionsYield,
   GroupMembershipYield,
+  GroupMemberYield,
   JiraCheckpoint,
   JiraConfig,
   PermissionSyncParams,
@@ -393,7 +394,7 @@ export class JiraConnector extends BaseConnector {
     }
   }
 
-  /** Groups → member emails; group id = the group name (matches grant holders). */
+  /** Groups → members; group id = the group name (matches grant holders). */
   async *syncGroups(
     params: PermissionSyncParams,
   ): AsyncGenerator<GroupMembershipYield> {
@@ -421,9 +422,9 @@ export class JiraConnector extends BaseConnector {
         // lookup — one such group must not abort the whole enumeration (which
         // would leave the snapshot empty and every group grant unresolvable).
         // A failed group yields no members: fail-closed for that group only.
-        let memberEmails: string[] = [];
+        let members: GroupMemberYield[] = [];
         try {
-          memberEmails = await this.resolveGroupMemberEmails(client, {
+          members = await this.resolveGroupMembers(client, {
             name: group.name,
             groupId: group.groupId,
           });
@@ -433,7 +434,7 @@ export class JiraConnector extends BaseConnector {
             "Could not resolve Jira group members; skipping group (its grants stay fail-closed)",
           );
         }
-        yield { groupId: group.name, memberEmails, cursor: group.name };
+        yield { groupId: group.name, members, cursor: group.name };
       }
       startAt += groups.length;
       if (startAt >= (result.total ?? startAt) || groups.length === 0) break;
@@ -804,12 +805,18 @@ export class JiraConnector extends BaseConnector {
     });
   }
 
-  private async resolveGroupMemberEmails(
+  /**
+   * Expand a group to EVERY member — including members whose email Jira hides
+   * (Cloud only exposes another user's email when their profile email
+   * visibility is "Anyone"; the caller's admin role does not unlock it). A
+   * hidden email yields `email: null` so the principal is still recorded.
+   */
+  private async resolveGroupMembers(
     // biome-ignore lint/suspicious/noExplicitAny: jira.js client
     client: any,
     group: { name: string; groupId?: string },
-  ): Promise<string[]> {
-    const emails: string[] = [];
+  ): Promise<GroupMemberYield[]> {
+    const members: GroupMemberYield[] = [];
     let startAt = 0;
     for (;;) {
       await this.rateLimit();
@@ -826,13 +833,20 @@ export class JiraConnector extends BaseConnector {
       // biome-ignore lint/suspicious/noExplicitAny: SDK user shape
       const users: any[] = result?.values ?? [];
       for (const user of users) {
-        const email = user?.emailAddress ?? null;
-        if (email) emails.push(email);
+        // Cloud has accountId; Server/DC has username/key instead.
+        const accountId =
+          user?.accountId ?? user?.name ?? user?.key ?? user?.emailAddress;
+        if (!accountId) continue; // no stable identity at all — nothing to record
+        members.push({
+          accountId: String(accountId),
+          displayName: user?.displayName ?? null,
+          email: user?.emailAddress ?? null,
+        });
       }
       startAt += users.length;
       if (startAt >= (result?.total ?? startAt) || users.length === 0) break;
     }
-    return emails;
+    return members;
   }
 
   /**

@@ -279,14 +279,19 @@ class PermissionSyncService {
             readIngestedDocuments,
           })) {
             stats.groupsSynced += 1;
-            stats.membershipsUpserted += group.memberEmails.length;
-            for (const memberEmail of group.memberEmails) {
+            stats.membershipsUpserted += group.members.length;
+            for (const member of group.members) {
+              // Every member is persisted — a hidden upstream email is stored
+              // as NULL (fail-closed at resolution, visible to admins) rather
+              // than dropping the principal.
               pending.push({
                 organizationId: connector.organizationId,
                 connectorId,
                 connectorType: connector.connectorType,
                 groupId: group.groupId,
-                memberEmail,
+                externalAccountId: member.accountId,
+                displayName: member.displayName,
+                memberEmail: member.email,
               });
             }
             if (pending.length >= this.batchSize) {

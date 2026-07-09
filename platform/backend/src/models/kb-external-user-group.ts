@@ -26,7 +26,9 @@ class KbExternalUserGroupModel {
 
   /**
    * Upsert a batch of memberships, clearing `stale` on conflict so re-observed
-   * memberships survive the completion-gated sweep.
+   * memberships survive the completion-gated sweep. A re-upsert also refreshes
+   * the email/display name, so a member whose email BECOMES visible upstream
+   * starts resolving on the next pass.
    */
   static async upsertMany(rows: InsertKbExternalUserGroup[]): Promise<void> {
     if (rows.length === 0) return;
@@ -36,16 +38,21 @@ class KbExternalUserGroupModel {
       .values(
         rows.map((row) => ({
           ...row,
-          memberEmail: normalizeEmail(row.memberEmail),
+          memberEmail: row.memberEmail ? normalizeEmail(row.memberEmail) : null,
         })),
       )
       .onConflictDoUpdate({
         target: [
           schema.kbExternalUserGroupTable.connectorId,
           schema.kbExternalUserGroupTable.groupId,
-          schema.kbExternalUserGroupTable.memberEmail,
+          schema.kbExternalUserGroupTable.externalAccountId,
         ],
-        set: { stale: false, updatedAt: new Date() },
+        set: {
+          stale: false,
+          memberEmail: sql`excluded.member_email`,
+          displayName: sql`excluded.display_name`,
+          updatedAt: new Date(),
+        },
       });
   }
 
@@ -110,7 +117,8 @@ class KbExternalUserGroupModel {
    * Archestra org member it resolves to at query time. Resolution is the same
    * normalized-email join `findGroupTokensForUser` enforces with, so what this
    * reports is exactly what access control does: `user` is null when no org
-   * member carries that email and the grant currently resolves to nobody.
+   * member carries that email — or when the upstream hides the email entirely
+   * (`memberEmail` null) — and the grant currently resolves to nobody.
    */
   static async findMembershipsWithUsersByConnector(params: {
     connectorId: string;
@@ -118,7 +126,9 @@ class KbExternalUserGroupModel {
   }): Promise<
     {
       groupId: string;
-      memberEmail: string;
+      externalAccountId: string;
+      displayName: string | null;
+      memberEmail: string | null;
       updatedAt: Date;
       user: { id: string; name: string } | null;
     }[]
@@ -127,6 +137,8 @@ class KbExternalUserGroupModel {
     const rows = await db
       .select({
         groupId: t.groupId,
+        externalAccountId: t.externalAccountId,
+        displayName: t.displayName,
         memberEmail: t.memberEmail,
         updatedAt: t.updatedAt,
         userId: schema.usersTable.id,
@@ -146,10 +158,12 @@ class KbExternalUserGroupModel {
         ),
       )
       .where(eq(t.connectorId, params.connectorId))
-      .orderBy(t.groupId, t.memberEmail);
+      .orderBy(t.groupId, t.memberEmail, t.externalAccountId);
 
     return rows.map((row) => ({
       groupId: row.groupId,
+      externalAccountId: row.externalAccountId,
+      displayName: row.displayName,
       memberEmail: row.memberEmail,
       updatedAt: row.updatedAt,
       // A matching user account only counts if it is a member of this org.

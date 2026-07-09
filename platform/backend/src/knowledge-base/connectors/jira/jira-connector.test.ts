@@ -1303,15 +1303,24 @@ describe("JiraConnector", () => {
       });
     });
 
-    test("syncGroups expands groups to member emails", async () => {
+    test("syncGroups expands groups to members, keeping hidden-email members with email null", async () => {
       server.use(
         http.get(`${CLOUD_HOST}/rest/api/3/group/bulk`, () =>
           HttpResponse.json({ values: [{ name: "devs" }], total: 1 }),
         ),
         http.get(`${CLOUD_HOST}/rest/api/3/group/member`, () =>
           HttpResponse.json({
-            values: [{ emailAddress: "alice@example.com" }],
-            total: 1,
+            values: [
+              {
+                accountId: "acc-alice",
+                displayName: "Alice",
+                emailAddress: "alice@example.com",
+              },
+              // Email hidden by Atlassian profile visibility — the member must
+              // still be recorded (fail-closed), not silently dropped.
+              { accountId: "acc-bob", displayName: "Bob" },
+            ],
+            total: 2,
           }),
         ),
       );
@@ -1323,7 +1332,14 @@ describe("JiraConnector", () => {
       expect(yields).toEqual([
         {
           groupId: "devs",
-          memberEmails: ["alice@example.com"],
+          members: [
+            {
+              accountId: "acc-alice",
+              displayName: "Alice",
+              email: "alice@example.com",
+            },
+            { accountId: "acc-bob", displayName: "Bob", email: null },
+          ],
           cursor: "devs",
         },
       ]);
@@ -1398,12 +1414,18 @@ describe("JiraConnector", () => {
       expect(yields).toEqual([
         {
           groupId: "atlassian-addons",
-          memberEmails: [],
+          members: [],
           cursor: "atlassian-addons",
         },
         {
           groupId: "devs",
-          memberEmails: ["alice@example.com"],
+          members: [
+            {
+              accountId: "alice@example.com",
+              displayName: null,
+              email: "alice@example.com",
+            },
+          ],
           cursor: "devs",
         },
       ]);

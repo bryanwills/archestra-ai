@@ -44041,7 +44041,18 @@ export type GetConnectorUserGroupsResponses = {
              */
             lastSyncedAt: string | null;
             members: Array<{
-                email: string;
+                /**
+                 * Stable upstream principal id (accountId / login).
+                 */
+                accountId: string;
+                /**
+                 * Upstream display name, if the source exposes one.
+                 */
+                displayName: string | null;
+                /**
+                 * Null when the upstream hides the member's email — the member is fail-closed.
+                 */
+                email: string | null;
                 /**
                  * Org user this email resolves to; null = grant currently resolves to nobody.
                  */

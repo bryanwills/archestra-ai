@@ -11,6 +11,7 @@ import type {
   GithubCheckpoint,
   GithubConfig,
   GroupMembershipYield,
+  GroupMemberYield,
   PermissionSyncParams,
 } from "@/types";
 import { GithubConfigSchema } from "@/types";
@@ -27,8 +28,11 @@ export class GithubConnector extends BaseConnector {
   type = "github" as const;
   supportsPermissionSync = true;
 
-  /** Per-pass cache of GitHub login → public email (or null when private). */
-  private userEmailCache = new Map<string, string | null>();
+  /** Per-pass cache of GitHub login → public profile (email null when private). */
+  private userProfileCache = new Map<
+    string,
+    { email: string | null; name: string | null }
+  >();
 
   async validateConfig(
     config: Record<string, unknown>,
@@ -562,7 +566,7 @@ export class GithubConnector extends BaseConnector {
           .list({ org, per_page: 100, page })
           .then((response) => response.data),
       )) {
-        const memberEmails: string[] = [];
+        const members: GroupMemberYield[] = [];
         for await (const member of this.paginate((page) =>
           octokit.rest.teams
             .listMembersInOrg({
@@ -573,12 +577,19 @@ export class GithubConnector extends BaseConnector {
             })
             .then((response) => response.data),
         )) {
-          const email = await this.resolveUserEmail(octokit, member.login);
-          if (email) memberEmails.push(email);
+          // Every member is recorded; GitHub only exposes an email the user
+          // made public, so `email` is often null (fail-closed, but visible
+          // to admins as unresolvable instead of silently dropped).
+          const profile = await this.resolveUserProfile(octokit, member.login);
+          members.push({
+            accountId: member.login,
+            displayName: profile.name,
+            email: profile.email,
+          });
         }
         yield {
           groupId: githubGroupId(org, team.slug),
-          memberEmails,
+          members,
           cursor: `${org}/${team.slug}`,
         };
       }
@@ -608,7 +619,8 @@ export class GithubConnector extends BaseConnector {
         })
         .then((response) => response.data),
     )) {
-      const email = await this.resolveUserEmail(octokit, collaborator.login);
+      const email = (await this.resolveUserProfile(octokit, collaborator.login))
+        .email;
       if (email) users.push(email);
       else dropped++;
     }
@@ -650,31 +662,38 @@ export class GithubConnector extends BaseConnector {
   }
 
   /**
-   * Resolve a login to its public email (per-pass cached). GitHub only exposes
-   * an email when the user has made it public — otherwise the principal can't be
-   * matched and is fail-closed (documented limitation).
+   * Resolve a login to its public profile (per-pass cached). GitHub only
+   * exposes an email when the user has made it public — no token scope reveals
+   * a private email — so `email` is null for most members (fail-closed,
+   * documented limitation).
    */
-  private async resolveUserEmail(
+  private async resolveUserProfile(
     octokit: Octokit,
     login: string,
-  ): Promise<string | null> {
-    const cached = this.userEmailCache.get(login);
+  ): Promise<{ email: string | null; name: string | null }> {
+    const cached = this.userProfileCache.get(login);
     if (cached !== undefined) return cached;
-    let email: string | null = null;
+    let profile: { email: string | null; name: string | null } = {
+      email: null,
+      name: null,
+    };
     try {
       await this.rateLimit();
       const response = await octokit.rest.users.getByUsername({
         username: login,
       });
-      email = response.data.email ?? null;
+      profile = {
+        email: response.data.email ?? null,
+        name: response.data.name ?? null,
+      };
     } catch (error) {
       this.log.debug(
         { login, error: extractErrorMessage(error) },
-        "Could not resolve GitHub user email",
+        "Could not resolve GitHub user profile",
       );
     }
-    this.userEmailCache.set(login, email);
-    return email;
+    this.userProfileCache.set(login, profile);
+    return profile;
   }
 
   /** Rate-limited generic pager over a 100-per-page GitHub list endpoint. */

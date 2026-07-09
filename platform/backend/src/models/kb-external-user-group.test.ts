@@ -20,6 +20,7 @@ describe("KbExternalUserGroupModel", () => {
         connectorId: connector.id,
         connectorType: "github",
         groupId: "eng",
+        externalAccountId: "Alice@Example.com",
         memberEmail: "Alice@Example.com",
       },
       {
@@ -27,6 +28,7 @@ describe("KbExternalUserGroupModel", () => {
         connectorId: connector.id,
         connectorType: "github",
         groupId: "ops",
+        externalAccountId: "bob@example.com",
         memberEmail: "bob@example.com",
       },
     ]);
@@ -56,6 +58,7 @@ describe("KbExternalUserGroupModel", () => {
       connectorId: connector.id,
       connectorType: "github" as const,
       groupId,
+      externalAccountId: "user@example.com",
       memberEmail: "user@example.com",
     });
 
@@ -97,6 +100,7 @@ describe("KbExternalUserGroupModel", () => {
         connectorId: connectorA.id,
         connectorType: "github",
         groupId: "eng",
+        externalAccountId: "user@example.com",
         memberEmail: "user@example.com",
       },
       {
@@ -104,6 +108,7 @@ describe("KbExternalUserGroupModel", () => {
         connectorId: connectorB.id,
         connectorType: "jira",
         groupId: "dev",
+        externalAccountId: "user@example.com",
         memberEmail: "user@example.com",
       },
     ]);

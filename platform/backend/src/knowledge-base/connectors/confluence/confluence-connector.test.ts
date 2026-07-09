@@ -944,9 +944,19 @@ describe("ConfluenceConnector permission sync", () => {
     });
   });
 
-  test("syncGroups expands groups to member emails", async () => {
+  test("syncGroups expands groups to members", async () => {
     routeSendRequest({
-      "/api/group/member": { results: [{ email: "alice@example.com" }] },
+      "/api/group/member": {
+        results: [
+          {
+            accountId: "acc-alice",
+            displayName: "Alice",
+            email: "alice@example.com",
+          },
+          // Email hidden — recorded with email null, never dropped.
+          { accountId: "acc-bob", publicName: "Bob" },
+        ],
+      },
       "/api/group": { results: [{ name: "devs" }] },
     });
 
@@ -959,17 +969,21 @@ describe("ConfluenceConnector permission sync", () => {
       }) ?? (async function* () {})(),
     );
 
-    expect(yields).toEqual([
+    const members = [
       {
-        groupId: "devs",
-        memberEmails: ["alice@example.com"],
-        cursor: "devs",
+        accountId: "acc-alice",
+        displayName: "Alice",
+        email: "alice@example.com",
       },
-      // Synthetic "any logged-in user" group: the union of every resolvable
-      // member across the instance's real groups.
+      { accountId: "acc-bob", displayName: "Bob", email: null },
+    ];
+    expect(yields).toEqual([
+      { groupId: "devs", members, cursor: "devs" },
+      // Synthetic "any logged-in user" group: the union of every member
+      // across the instance's real groups.
       {
         groupId: "confluence-any-logged-in-user",
-        memberEmails: ["alice@example.com"],
+        members,
         cursor: "confluence-any-logged-in-user",
       },
     ]);

@@ -65,7 +65,15 @@ function makeFakeConnector(opts: {
     impl.syncGroups = async function* () {
       if (opts.syncGroupsThrows) throw new Error("group crash");
       for (const group of opts.groups ?? []) {
-        yield { groupId: group.groupId, memberEmails: group.memberEmails };
+        // Test API stays email-shaped; the pass consumes full principals.
+        yield {
+          groupId: group.groupId,
+          members: group.memberEmails.map((email) => ({
+            accountId: email,
+            displayName: null,
+            email,
+          })),
+        };
       }
     };
   }
@@ -480,6 +488,7 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
         connectorId: connector.id,
         connectorType: "github",
         groupId: "g1",
+        externalAccountId: "alice@example.com",
         memberEmail: "alice@example.com",
         stale: false,
       },
@@ -488,6 +497,7 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
         connectorId: connector.id,
         connectorType: "github",
         groupId: "gone",
+        externalAccountId: "bob@example.com",
         memberEmail: "bob@example.com",
         stale: false,
       },
@@ -552,6 +562,7 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
       connectorId: connector.id,
       connectorType: "github",
       groupId: "g1",
+      externalAccountId: "alice@example.com",
       memberEmail: "alice@example.com",
       stale: false,
     });

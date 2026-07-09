@@ -21,6 +21,7 @@ async function grantGroup(params: {
       connectorId: params.connectorId,
       connectorType: "github",
       groupId: params.groupId,
+      externalAccountId: params.memberEmail,
       memberEmail: params.memberEmail,
     },
   ]);

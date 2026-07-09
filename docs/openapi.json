@@ -169469,8 +169469,19 @@
                             "items": {
                               "type": "object",
                               "properties": {
+                                "accountId": {
+                                  "type": "string",
+                                  "description": "Stable upstream principal id (accountId / login)."
+                                },
+                                "displayName": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Upstream display name, if the source exposes one."
+                                },
                                 "email": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Null when the upstream hides the member's email \u2014 the member is fail-closed."
                                 },
                                 "user": {
                                   "type": "object",
@@ -169490,6 +169501,8 @@
                                 }
                               },
                               "required": [
+                                "accountId",
+                                "displayName",
                                 "email",
                                 "user"
                               ]
