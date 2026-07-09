@@ -228,7 +228,13 @@ function buildUnrestrictedFloorPolicy(params: {
           ? [
               {
                 to: params.clusterDnsIps.map((ip) => ({
-                  ipBlock: { cidr: ip.includes("/") ? ip : `${ip}/32` },
+                  ipBlock: {
+                    cidr: ip.includes("/")
+                      ? ip
+                      : ip.includes(":")
+                        ? `${ip}/128`
+                        : `${ip}/32`,
+                  },
                 })),
                 ports: dnsPorts,
               },
