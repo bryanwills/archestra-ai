@@ -8,6 +8,7 @@ import db, { schema } from "@/database";
 import logger from "@/logging";
 import type {
   AppearanceSettings,
+  NetworkPolicy,
   Organization,
   OrganizationAnalyticsState,
 } from "@/types";
@@ -269,6 +270,24 @@ class OrganizationModel {
       .where(eq(schema.organizationsTable.id, id))
       .limit(1);
     return row ?? null;
+  }
+
+  /**
+   * The organization's default egress policy for sandbox engines. Engine
+   * reconciliation reads only this column, so it avoids the row's base64 logo
+   * fields.
+   */
+  static async getDefaultNetworkPolicy(
+    id: string,
+  ): Promise<NetworkPolicy | null> {
+    const [row] = await db
+      .select({
+        defaultNetworkPolicy: schema.organizationsTable.defaultNetworkPolicy,
+      })
+      .from(schema.organizationsTable)
+      .where(eq(schema.organizationsTable.id, id))
+      .limit(1);
+    return row?.defaultNetworkPolicy ?? null;
   }
 
   /**
