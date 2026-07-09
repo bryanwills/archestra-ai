@@ -77,7 +77,7 @@ Supported connectors: **GitHub**, **Confluence**, and **Jira**. Support for Goog
 
 **Identity model.** The join key is email, end to end. A document shared with an upstream user is visible when that user's Archestra email matches their upstream email. Each upstream group is expanded to its member emails on a periodic snapshot; at query time your email resolves your group memberships through a local join, so there are no upstream calls on the query path. Emails are trimmed and case-folded before matching.
 
-**Permission-sync pass.** A single pass per connector re-derives every document's ACL on a schedule. Each run is a full reconcile: it writes only what changed — no re-embedding — and fail-closes anything no longer visible upstream. The pass runs on a global cron schedule (default every 30 minutes), which an admin can override per organization on the **Settings > Knowledge** page. It runs in an isolated job lane, so permission sync never blocks content sync. See [`ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE`](/docs/platform-deployment#knowledge-base-configuration).
+**Permission-sync pass.** A single pass per connector re-derives every document's ACL. Each run is a full reconcile: it writes only what changed — no re-embedding — and fail-closes anything no longer visible upstream. A pass runs whenever a content sync ingests new documents, when triggered manually from the connector page, and on the connector's **Permission Sync Interval** (set in the connector form, default every 30 minutes) — measured from the last pass, whatever started it, so a manual run pushes the next scheduled one a full interval out. It runs in an isolated job lane, so permission sync never blocks content sync.
 
 Documents with empty or unknown permissions get an empty ACL, so only admins see them.
 
@@ -85,7 +85,7 @@ Documents with empty or unknown permissions get an empty ACL, so only admins see
 
 - **Upstream email privacy.** GitHub only exposes public emails, and Confluence and Jira Cloud largely hide them. A principal whose email cannot be resolved is fail-closed.
 - **Email is the only join key.** An Archestra user whose email differs from their upstream email will not match.
-- **Eventual consistency.** New or newly-changed access stays fail-closed until the next scheduled pass. Keep the schedule reasonably short.
+- **Eventual consistency.** Newly-changed upstream access stays fail-closed until the next pass. Keep the connector's permission sync interval reasonably short.
 - **Credential scope.** Reading container-level permissions — Confluence space permissions, Jira project schemes, GitHub org teams and collaborator emails — needs adequate admin scope on the connector's credentials.
 
 ## Supported Connectors
