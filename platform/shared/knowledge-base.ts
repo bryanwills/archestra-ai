@@ -20,6 +20,15 @@ export const DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS = 30 * 60;
  */
 export const MIN_PERMISSION_SYNC_INTERVAL_SECONDS = 15 * 60;
 
+/**
+ * Sentinel `permissionSyncIntervalSeconds` value: no interval-scheduled
+ * passes — permissions follow the documents sync schedule instead. A pass
+ * runs after every completed documents sync (permissions can change upstream
+ * without any document changing) and on manual trigger. Stored as 0 so the
+ * column stays NOT NULL.
+ */
+export const PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE = 0;
+
 export const SUPPORTED_EMBEDDING_DIMENSIONS = [
   3072, 1536, 1024, 768, 384,
 ] as const;

@@ -1,3 +1,4 @@
+import { PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE } from "@archestra/shared";
 import { getConnector } from "@/knowledge-base/connectors/registry";
 import { nextPermissionSyncDueAt } from "@/knowledge-base/permission-sync-schedule";
 import logger from "@/logging";
@@ -47,6 +48,14 @@ export async function handleCheckDuePermissionSyncs(): Promise<void> {
     );
 
     for (const connector of autoSyncConnectors) {
+      // Follow mode: no interval-scheduled passes — the documents-sync
+      // trigger (and manual runs) are this connector's only passes.
+      if (
+        connector.permissionSyncIntervalSeconds ===
+        PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE
+      ) {
+        continue;
+      }
       // Cadence semantics: due one interval after the last pass (manual,
       // content-ingest-triggered, or scheduled) — a manual pass pushes the
       // next scheduled one out instead of double-running minutes later.

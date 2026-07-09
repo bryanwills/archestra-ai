@@ -1,3 +1,4 @@
+import { PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE } from "@archestra/shared";
 import { sql } from "drizzle-orm";
 import db from "@/database";
 import {
@@ -130,6 +131,30 @@ describe("handleCheckDuePermissionSyncs", () => {
 
       expect(await countPermissionSyncTasks(connector.id)).toBe(0);
     });
+  });
+
+  test("follow mode: never enqueues on the interval tick, however overdue", async ({
+    makeOrganization,
+    makeKnowledgeBase,
+    makeKnowledgeBaseConnector,
+  }) => {
+    const org = await makeOrganization();
+    const kb = await makeKnowledgeBase(org.id);
+    const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+      visibility: "auto-sync-permissions",
+      connectorType: "github",
+      enabled: true,
+    });
+    // Interval 0 = follow the documents sync schedule: passes come from the
+    // documents-sync trigger and manual runs only.
+    await KnowledgeBaseConnectorModel.update(connector.id, {
+      permissionSyncIntervalSeconds: PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+      lastPermissionSyncAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+    });
+
+    await handleCheckDuePermissionSyncs();
+
+    expect(await countPermissionSyncTasks(connector.id)).toBe(0);
   });
 
   test("does NOT enqueue for a non-auto-sync connector (org-wide/team-scoped)", async ({

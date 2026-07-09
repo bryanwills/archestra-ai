@@ -162578,7 +162578,7 @@
                   },
                   "permissionSyncIntervalSeconds": {
                     "type": "integer",
-                    "minimum": 900
+                    "minimum": 0
                   },
                   "enabled": {
                     "type": "boolean"
@@ -165784,7 +165784,7 @@
                   },
                   "permissionSyncIntervalSeconds": {
                     "type": "integer",
-                    "minimum": 900
+                    "minimum": 0
                   },
                   "enabled": {
                     "type": "boolean"

@@ -1,4 +1,7 @@
-import { ADMIN_ROLE_NAME } from "@archestra/shared";
+import {
+  ADMIN_ROLE_NAME,
+  PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+} from "@archestra/shared";
 import { sql } from "drizzle-orm";
 import config from "@/config";
 import db from "@/database";
@@ -926,6 +929,29 @@ describe("knowledge base routes", () => {
         },
       });
       expect(response.statusCode).toBe(400);
+    });
+
+    test("accepts interval 0 — follow the documents sync schedule", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/connectors",
+        payload: {
+          name: "Follows Documents Schedule",
+          connectorType: "perforce",
+          config: {
+            type: "perforce",
+            serverUrl: "https://perforce.example.com:8080",
+            depotPaths: ["//depot/docs"],
+          },
+          credentials: { email: "svc-knowledge", apiToken: "ticket" },
+          permissionSyncIntervalSeconds:
+            PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().permissionSyncIntervalSeconds).toBe(
+        PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+      );
     });
 
     test("rejects perforce depot paths containing revision metacharacters", async () => {

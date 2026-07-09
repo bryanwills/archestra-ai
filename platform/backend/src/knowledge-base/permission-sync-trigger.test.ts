@@ -1,8 +1,10 @@
 // This file contains Enterprise regions licensed under LICENSE_ENTERPRISE.
+
+import { PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE } from "@archestra/shared";
 import { and, count, eq, sql } from "drizzle-orm";
 import db, { schema } from "@/database";
 import { enqueuePermissionSyncForIngestedContent } from "@/knowledge-base";
-import { TaskModel } from "@/models";
+import { KnowledgeBaseConnectorModel, TaskModel } from "@/models";
 import { describe, expect, test } from "@/test";
 
 async function permissionSyncTaskCount(connectorId: string): Promise<number> {
@@ -85,6 +87,34 @@ describe("enqueuePermissionSyncForIngestedContent (content-ingest trigger)", () 
     });
 
     expect(await permissionSyncTaskCount(connector.id)).toBe(0);
+  });
+
+  test("follow mode: enqueues after a 0-document sync (its only automatic pass)", async ({
+    makeOrganization,
+    makeKnowledgeBase,
+    makeKnowledgeBaseConnector,
+  }) => {
+    const org = await makeOrganization();
+    const kb = await makeKnowledgeBase(org.id);
+    const connector = await makeKnowledgeBaseConnector(kb.id, org.id, {
+      visibility: "auto-sync-permissions",
+      connectorType: "github",
+    });
+    // Follow the documents sync schedule: no interval-scheduled passes, so
+    // upstream permission changes without content changes must still be
+    // picked up after every documents sync.
+    await KnowledgeBaseConnectorModel.update(connector.id, {
+      permissionSyncIntervalSeconds: PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+    });
+    const updated = await KnowledgeBaseConnectorModel.findById(connector.id);
+    if (!updated) throw new Error("connector vanished");
+
+    await enqueuePermissionSyncForIngestedContent({
+      connector: updated,
+      documentsIngested: 0,
+    });
+
+    expect(await permissionSyncTaskCount(connector.id)).toBe(1);
   });
 
   test("does not enqueue for a non-auto-sync connector", async ({

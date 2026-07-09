@@ -1,6 +1,7 @@
 // This file contains Enterprise regions licensed under LICENSE_ENTERPRISE.
 "use client";
 
+import { PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE } from "@archestra/shared";
 import type { UseFormReturn } from "react-hook-form";
 import {
   FormControl,
@@ -18,13 +19,12 @@ import {
 } from "@/components/ui/select";
 
 const INTERVAL_OPTIONS: { seconds: number; label: string }[] = [
-  { seconds: 15 * 60, label: "Every 15 minutes" },
+  {
+    seconds: PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
+    label: "Follow the documents sync schedule",
+  },
   { seconds: 30 * 60, label: "Every 30 minutes" },
   { seconds: 60 * 60, label: "Every hour" },
-  { seconds: 3 * 60 * 60, label: "Every 3 hours" },
-  { seconds: 6 * 60 * 60, label: "Every 6 hours" },
-  { seconds: 12 * 60 * 60, label: "Every 12 hours" },
-  { seconds: 24 * 60 * 60, label: "Every 24 hours" },
 ];
 
 export function PermissionSyncIntervalPicker({
@@ -62,7 +62,7 @@ export function PermissionSyncIntervalPicker({
             </SelectContent>
           </Select>
           <FormDescription>
-            Pick how often to sync content permissions with your{" "}
+            Pick how often to sync document permissions with your{" "}
             {connectorTypeLabel} instance
           </FormDescription>
         </FormItem>

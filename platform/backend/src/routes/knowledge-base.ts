@@ -4,10 +4,27 @@ import {
   createPaginatedResponseSchema,
   MIN_PERMISSION_SYNC_INTERVAL_SECONDS,
   PaginationQuerySchema,
+  PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE,
   RouteId,
 } from "@archestra/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+
+// 0 = follow the documents sync schedule (no interval-scheduled passes);
+// anything else must clear the interval floor.
+const PermissionSyncIntervalSchema = z
+  .number()
+  .int()
+  .min(PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE)
+  .refine(
+    (value) =>
+      value === PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE ||
+      value >= MIN_PERMISSION_SYNC_INTERVAL_SECONDS,
+    {
+      message: `Permission sync interval must be ${PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE} (follow the documents sync schedule) or at least ${MIN_PERMISSION_SYNC_INTERVAL_SECONDS} seconds`,
+    },
+  );
+
 import { userHasPermission } from "@/auth/utils";
 import { enterpriseTier } from "@/enterprise-tier";
 import {
@@ -487,11 +504,8 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           // github_app_configs row instead of an inline secret
           credentials: ConnectorCredentialsSchema.optional(),
           schedule: z.string().optional(),
-          permissionSyncIntervalSeconds: z
-            .number()
-            .int()
-            .min(MIN_PERMISSION_SYNC_INTERVAL_SECONDS)
-            .optional(),
+          permissionSyncIntervalSeconds:
+            PermissionSyncIntervalSchema.optional(),
           enabled: z.boolean().optional(),
           knowledgeBaseIds: z.array(z.string()).optional(),
           environmentId: z.string().uuid().nullable().optional(),
@@ -805,11 +819,8 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           config: ConnectorConfigSchema.optional(),
           credentials: ConnectorCredentialsSchema.optional(),
           schedule: z.string().optional(),
-          permissionSyncIntervalSeconds: z
-            .number()
-            .int()
-            .min(MIN_PERMISSION_SYNC_INTERVAL_SECONDS)
-            .optional(),
+          permissionSyncIntervalSeconds:
+            PermissionSyncIntervalSchema.optional(),
           enabled: z.boolean().optional(),
           environmentId: z.string().uuid().nullable().optional(),
         }),
@@ -1230,11 +1241,16 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
       const permissionSyncRunning = hasRunningRun || hasQueuedTask;
 
       // Cadence semantics (one interval after the last pass), matching the
-      // scheduler.
-      const nextScheduledAt = nextPermissionSyncDueAt({
-        intervalSeconds: connector.permissionSyncIntervalSeconds,
-        lastPermissionSyncAt: connector.lastPermissionSyncAt,
-      }).toISOString();
+      // scheduler. Follow mode has no scheduled pass — the next one comes
+      // from the documents-sync trigger.
+      const nextScheduledAt =
+        connector.permissionSyncIntervalSeconds ===
+        PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE
+          ? null
+          : nextPermissionSyncDueAt({
+              intervalSeconds: connector.permissionSyncIntervalSeconds,
+              lastPermissionSyncAt: connector.lastPermissionSyncAt,
+            }).toISOString();
 
       return reply.send({
         totalDocuments: coverage.totalDocuments,
