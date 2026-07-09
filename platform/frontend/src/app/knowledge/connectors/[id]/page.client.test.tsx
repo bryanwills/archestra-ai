@@ -373,7 +373,7 @@ describe("ConnectorDetailPage", () => {
 
       expect(screen.getByText("Permissions Coverage")).toBeInTheDocument();
       expect(
-        screen.getByText(/40 documents awaiting sync/),
+        screen.getByText(/40 documents awaiting permission sync/),
       ).toBeInTheDocument();
       // The permissions row mirrors the content row's Last/cadence items.
       expect(screen.getByText("Last Permissions Sync")).toBeInTheDocument();
@@ -390,7 +390,7 @@ describe("ConnectorDetailPage", () => {
       );
     });
 
-    it("shows full coverage when no documents are fail-closed", () => {
+    it("renders no coverage item at all when no documents are fail-closed (exception-only)", () => {
       mockUseConnector.mockReturnValue({
         data: makeConnector({ visibility: "auto-sync-permissions" }),
         isPending: false,
@@ -408,9 +408,12 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
-      // Full coverage is the unremarkable state — a terse confirmation, not
-      // a ratio that duplicates the Documents count.
-      expect(screen.getByText("All documents tagged")).toBeInTheDocument();
+      // Full coverage is the self-healing steady state — showing it is noise.
+      expect(
+        screen.queryByText("Permissions Coverage"),
+      ).not.toBeInTheDocument();
+      // The symmetric permissions items still render.
+      expect(screen.getByText("Last Permissions Sync")).toBeInTheDocument();
     });
 
     it("shows Syncing now and disables the menu item while a pass runs", async () => {

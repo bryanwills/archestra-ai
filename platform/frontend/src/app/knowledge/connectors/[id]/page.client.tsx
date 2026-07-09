@@ -557,20 +557,19 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
                     )}
                   </div>
                 </MetadataItem>
-                {coverage && coverage.totalDocuments > 0 && (
+                {/* Exception-only: full coverage is the unremarkable steady
+                    state (the system self-heals transient gaps), so the item
+                    exists only while documents are actually unreachable. */}
+                {coverage && coverage.failClosedDocuments > 0 && (
                   <MetadataItem label="Permissions Coverage">
-                    {coverage.failClosedDocuments > 0 ? (
-                      <div
-                        className="text-amber-600"
-                        title="Access-restricted until a permission sync tags them with their source permissions"
-                      >
-                        {coverage.failClosedDocuments.toLocaleString()} document
-                        {coverage.failClosedDocuments === 1 ? "" : "s"} awaiting
-                        sync
-                      </div>
-                    ) : (
-                      <div>All documents tagged</div>
-                    )}
+                    <div
+                      className="text-amber-600"
+                      title="Access-restricted until a permission sync tags them with their source permissions"
+                    >
+                      {coverage.failClosedDocuments.toLocaleString()} document
+                      {coverage.failClosedDocuments === 1 ? "" : "s"} awaiting
+                      permission sync
+                    </div>
                   </MetadataItem>
                 )}
               </>
