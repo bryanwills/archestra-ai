@@ -160,26 +160,46 @@ class TaskModel {
    * reads as "sync running" — blocking manual triggers and the scheduler —
    * until the generic 1-hour stuck sweep. Grace is DB-clock-relative for the
    * same timezone reason as resetStuckTasks.
+   *
+   * A crash loop can pile up several orphans per connector; a pass is
+   * connector-level work, so only the newest is revived and the rest are
+   * dead-lettered as superseded instead of each burning a redundant full pass.
    */
   static async requeueOrphanedPermissionSyncTasks(
     graceSeconds: number,
   ): Promise<string[]> {
     const { rows } = await db.execute<{ id: string }>(sql`
-      UPDATE tasks t
+      WITH orphans AS (
+        SELECT t.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY t.payload->>'connectorId'
+                 ORDER BY t.created_at DESC
+               ) AS rn
+        FROM tasks t
+        WHERE t.task_type = 'permission_sync'
+          AND t.status = 'processing'
+          AND t.started_at < NOW() - make_interval(secs => ${graceSeconds})
+          AND NOT EXISTS (
+            SELECT 1 FROM connector_runs r
+            WHERE r.connector_id::text = t.payload->>'connectorId'
+              AND r.run_type = 'permission'
+              AND r.status = 'running'
+          )
+      ),
+      superseded AS (
+        UPDATE tasks
+        SET status = 'dead',
+            completed_at = NOW(),
+            last_error = 'Superseded by a newer orphaned permission-sync task for the same connector'
+        WHERE id IN (SELECT id FROM orphans WHERE rn > 1)
+      )
+      UPDATE tasks
       SET status = 'pending',
           started_at = NULL,
           scheduled_for = NOW(),
-          attempt = GREATEST(t.attempt - 1, 0)
-      WHERE t.task_type = 'permission_sync'
-        AND t.status = 'processing'
-        AND t.started_at < NOW() - make_interval(secs => ${graceSeconds})
-        AND NOT EXISTS (
-          SELECT 1 FROM connector_runs r
-          WHERE r.connector_id::text = t.payload->>'connectorId'
-            AND r.run_type = 'permission'
-            AND r.status = 'running'
-        )
-      RETURNING t.id
+          attempt = GREATEST(attempt - 1, 0)
+      WHERE id IN (SELECT id FROM orphans WHERE rn = 1)
+      RETURNING id
     `);
     return rows.map((row) => row.id);
   }

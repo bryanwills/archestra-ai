@@ -431,6 +431,35 @@ describe("handleCheckDuePermissionSyncs", () => {
       expect(await taskStatus(task.id)).toBe("processing");
     });
 
+    test("a crash loop's pile of orphans revives only the newest; older ones are dead-lettered as superseded", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const connector = await makeQuietConnector({
+        makeOrganization,
+        makeKnowledgeBase,
+        makeKnowledgeBaseConnector,
+      });
+      const older = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      const newer = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      await wedgeIntoProcessing(older.id, 12 * 60);
+      await wedgeIntoProcessing(newer.id, 5 * 60);
+
+      await handleCheckDuePermissionSyncs();
+
+      // A pass is connector-level work — reviving both would run a redundant
+      // full pass back-to-back.
+      expect(await taskStatus(newer.id)).toBe("pending");
+      expect(await taskStatus(older.id)).toBe("dead");
+    });
+
     test("a crash mid-pass recovers to exactly one requeued task in one tick", async ({
       makeOrganization,
       makeKnowledgeBase,
