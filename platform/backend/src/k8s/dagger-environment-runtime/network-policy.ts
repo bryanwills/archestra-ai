@@ -107,6 +107,7 @@ export function buildDaggerEgressPolicies(params: {
           name,
           podSelectorLabels,
           additionalDeniedCidrs: params.additionalDeniedCidrs ?? [],
+          clusterDnsIps,
         }),
       },
     ];
@@ -191,10 +192,15 @@ function buildUnrestrictedFloorPolicy(params: {
   name: string;
   podSelectorLabels: Record<string, string>;
   additionalDeniedCidrs: string[];
+  clusterDnsIps: string[];
 }): k8s.V1NetworkPolicy {
   const deniedIpv4 = [
     ...FLOOR_DENIED_IPV4_CIDRS,
     ...params.additionalDeniedCidrs,
+  ];
+  const dnsPorts = [
+    { protocol: "UDP", port: 53 as unknown as k8s.IntOrString },
+    { protocol: "TCP", port: 53 as unknown as k8s.IntOrString },
   ];
   return {
     apiVersion: "networking.k8s.io/v1",
@@ -210,13 +216,24 @@ function buildUnrestrictedFloorPolicy(params: {
       podSelector: { matchLabels: params.podSelectorLabels },
       policyTypes: ["Egress"],
       egress: [
-        // DNS on :53 to any resolver.
-        {
-          ports: [
-            { protocol: "UDP", port: 53 as unknown as k8s.IntOrString },
-            { protocol: "TCP", port: 53 as unknown as k8s.IntOrString },
-          ],
-        },
+        // DNS on :53 to any resolver — kept ports-only so a link-local
+        // NodeLocal DNSCache resolver (denied by the private floor below) keeps
+        // working on providers that front cluster DNS with one.
+        { ports: dnsPorts },
+        // The AWS ApplicationNetworkPolicy agent ignores a ports-only rule with
+        // no `to`, and the cluster resolver sits in the except-denied private
+        // range, so also allow :53 to the resolver IPs explicitly. Additive —
+        // leaves the rule above intact for every other provider.
+        ...(params.clusterDnsIps.length > 0
+          ? [
+              {
+                to: params.clusterDnsIps.map((ip) => ({
+                  ipBlock: { cidr: ip.includes("/") ? ip : `${ip}/32` },
+                })),
+                ports: dnsPorts,
+              },
+            ]
+          : []),
         {
           to: [{ ipBlock: { cidr: "0.0.0.0/0", except: deniedIpv4 } }],
         },
