@@ -162,7 +162,12 @@ export class TaskQueueService {
 
     if (result === "timeout") {
       const remainingIds = [...this.activeTaskIds];
-      this.activeTaskIds.clear();
+      // Fully untrack (not just clear the id set): the abandoned tasks'
+      // processTask callbacks never run their untrack, so their lane slots
+      // would stay occupied forever and starve the lanes after a restart.
+      for (const id of remainingIds) {
+        this.untrackTask(id);
+      }
       logger.warn(
         { taskIds: remainingIds },
         "[TaskQueue] Drain timed out, releasing tasks back to queue",
