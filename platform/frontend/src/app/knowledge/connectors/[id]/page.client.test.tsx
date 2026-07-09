@@ -138,12 +138,9 @@ describe("ConnectorDetailPage", () => {
       expect(
         screen.getAllByRole("link", { name: "Sync Runs" }).length,
       ).toBeGreaterThan(0);
-      expect(screen.getByRole("tab", { name: "All runs" })).toBeInTheDocument();
+      // The run-family filter follows the standard dropdown-filter pattern.
       expect(
-        screen.getByRole("tab", { name: "Documents" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("tab", { name: "Permissions" }),
+        screen.getByRole("combobox", { name: "Filter runs" }),
       ).toBeInTheDocument();
       // Group visibility is auto-sync-only; the tab is named for what it
       // shows users (Permissions), distinct from the runs-family filter tab.
@@ -340,10 +337,11 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
-      // The legacy permission-runs deep link preselects the family filter.
-      expect(screen.getByRole("tab", { name: "Permissions" })).toHaveAttribute(
-        "aria-selected",
-        "true",
+      // The legacy permission-runs deep link preselects the family filter —
+      // observable through the runs query it drives (the closed Radix Select
+      // does not render its selected label in jsdom).
+      expect(mockUseConnectorRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ runType: "permission" }),
       );
       // Family-aware Results summary instead of dedicated permission columns.
       expect(screen.getByText(/13,831 ACLs changed/)).toBeInTheDocument();
@@ -542,8 +540,12 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
-      // Pick 20 in the rows-per-page selector (first of the desktop/mobile pair).
-      await userEvent.click(screen.getAllByRole("combobox")[0]);
+      // Pick 20 in the rows-per-page selector (first of the desktop/mobile
+      // pair, excluding the run-family filter combobox).
+      const rowsPerPage = screen
+        .getAllByRole("combobox")
+        .filter((el) => el.getAttribute("aria-label") !== "Filter runs");
+      await userEvent.click(rowsPerPage[0]);
       await userEvent.click(await screen.findByRole("option", { name: "20" }));
 
       expect(mockUseConnectorRuns).toHaveBeenLastCalledWith(

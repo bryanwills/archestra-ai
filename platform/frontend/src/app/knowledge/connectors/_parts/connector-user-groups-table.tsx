@@ -10,7 +10,13 @@ import { getPermissionSyncCredentialNote } from "@/app/knowledge/knowledge-bases
 import { SearchInput } from "@/components/search-input";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -146,25 +152,29 @@ export function ConnectorUserGroupsTable({
       )}
 
       {groups.length > 0 && (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="w-full max-w-md">
-            <SearchInput
-              value={search}
-              syncQueryParams={false}
-              placeholder="Search groups and members..."
-              onSearchChange={setSearch}
-            />
-          </div>
-          <Tabs
+        <div className="flex flex-wrap gap-4">
+          <SearchInput
+            value={search}
+            syncQueryParams={false}
+            placeholder="Search groups and members..."
+            onSearchChange={setSearch}
+          />
+          <Select
             value={filter}
             onValueChange={(value) => setFilter(value as GroupFilter)}
           >
-            <TabsList>
-              <TabsTrigger value="all">All groups</TabsTrigger>
-              <TabsTrigger value="needs-attention">Needs attention</TabsTrigger>
-              <TabsTrigger value="fully-resolved">Fully resolved</TabsTrigger>
-            </TabsList>
-          </Tabs>
+            <SelectTrigger
+              className="h-9 w-full text-sm sm:w-[200px]"
+              aria-label="Filter groups"
+            >
+              <SelectValue placeholder="All groups" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All groups</SelectItem>
+              <SelectItem value="needs-attention">Needs attention</SelectItem>
+              <SelectItem value="fully-resolved">Fully resolved</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       )}
 
@@ -190,17 +200,21 @@ const MAX_VISIBLE_MEMBERS = 2;
 
 interface MemberStats {
   groups: number;
-  /** Distinct upstream accounts across all groups. */
+  /** Distinct upstream HUMAN accounts across all groups. */
   uniqueMembers: number;
   resolved: number;
   hiddenEmail: number;
   noMatchingUser: number;
+  /** Distinct add-on/bot accounts ("app") — excluded from the counts above. */
+  serviceAccounts: number;
 }
 
 /**
  * Distinct-account rollup: the same person appears in many groups, so the
  * strip counts accounts, not memberships — "how many people resolve" is the
- * question the admin is actually asking.
+ * question the admin is actually asking. Add-on/bot accounts ("app") are
+ * counted separately: they never carry an email, never resolve, and would
+ * otherwise read as a credential problem.
  */
 function computeMemberStats(groups: ConnectorUserGroup[]): MemberStats {
   const byAccount = new Map<string, ConnectorUserGroupMember>();
@@ -209,14 +223,20 @@ function computeMemberStats(groups: ConnectorUserGroup[]): MemberStats {
       byAccount.set(member.accountId, member);
     }
   }
-  const members = [...byAccount.values()];
+  const all = [...byAccount.values()];
+  const humans = all.filter((m) => !isServiceAccount(m));
   return {
     groups: groups.length,
-    uniqueMembers: members.length,
-    resolved: members.filter((m) => m.user).length,
-    hiddenEmail: members.filter((m) => !m.user && !m.email).length,
-    noMatchingUser: members.filter((m) => !m.user && m.email).length,
+    uniqueMembers: humans.length,
+    resolved: humans.filter((m) => m.user).length,
+    hiddenEmail: humans.filter((m) => !m.user && !m.email).length,
+    noMatchingUser: humans.filter((m) => !m.user && m.email).length,
+    serviceAccounts: all.length - humans.length,
   };
+}
+
+function isServiceAccount(member: ConnectorUserGroupMember): boolean {
+  return member.accountType === "app";
 }
 
 function MemberStatsStrip({ stats }: { stats: MemberStats }) {
@@ -224,7 +244,15 @@ function MemberStatsStrip({ stats }: { stats: MemberStats }) {
   return (
     <div className="flex flex-wrap gap-x-8 gap-y-3 rounded-lg border p-4">
       <StatBlock label="Groups" value={stats.groups.toLocaleString()} />
-      <StatBlock label="Members" value={stats.uniqueMembers.toLocaleString()} />
+      <StatBlock
+        label="Members"
+        value={stats.uniqueMembers.toLocaleString()}
+        detail={
+          stats.serviceAccounts > 0
+            ? `+ ${stats.serviceAccounts.toLocaleString()} app account${stats.serviceAccounts === 1 ? "" : "s"}`
+            : undefined
+        }
+      />
       <StatBlock
         label="Resolved"
         value={stats.resolved.toLocaleString()}
@@ -321,10 +349,10 @@ function UnresolvedMembersHint({
  */
 function matchesFilter(group: ConnectorUserGroup, filter: GroupFilter) {
   if (filter === "all") return true;
-  const resolved = group.members.filter((m) => m.user).length;
+  const humans = group.members.filter((m) => !isServiceAccount(m));
+  const resolved = humans.filter((m) => m.user).length;
   const needsAttention =
-    resolved < group.members.length ||
-    (group.documentCount > 0 && resolved === 0);
+    resolved < humans.length || (group.documentCount > 0 && resolved === 0);
   return filter === "needs-attention" ? needsAttention : !needsAttention;
 }
 
@@ -360,7 +388,7 @@ function compareGroupsBySeverity(
     return g.documentCount > 0 && resolved === 0 ? 1 : 0;
   };
   const unresolvedCount = (g: ConnectorUserGroup) =>
-    g.members.filter((m) => !m.user).length;
+    g.members.filter((m) => !isServiceAccount(m) && !m.user).length;
   return (
     severity(b) - severity(a) ||
     b.documentCount - a.documentCount ||
@@ -386,8 +414,12 @@ function MemberBadges({ members }: { members: ConnectorUserGroupMember[] }) {
     );
   }
 
-  const visible = members.slice(0, MAX_VISIBLE_MEMBERS);
-  const hidden = members.slice(MAX_VISIBLE_MEMBERS);
+  // Humans before app/bot accounts so the two visible badges carry signal.
+  const ordered = [...members].sort(
+    (a, b) => Number(isServiceAccount(a)) - Number(isServiceAccount(b)),
+  );
+  const visible = ordered.slice(0, MAX_VISIBLE_MEMBERS);
+  const hidden = ordered.slice(MAX_VISIBLE_MEMBERS);
 
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -425,12 +457,18 @@ function MemberBadges({ members }: { members: ConnectorUserGroupMember[] }) {
 }
 
 function memberLabel(member: ConnectorUserGroupMember): string {
+  if (isServiceAccount(member)) {
+    return `${member.displayName ?? member.accountId} · app`;
+  }
   const identity =
     member.email ?? `${member.displayName ?? member.accountId} · email hidden`;
   return member.user ? `${identity} · ${member.user.name}` : identity;
 }
 
 function memberTitle(member: ConnectorUserGroupMember): string {
+  if (isServiceAccount(member)) {
+    return "Add-on/service account from the source system — it cannot sign in and does not affect who can access documents";
+  }
   if (member.user) {
     return `Resolves to ${member.user.name}`;
   }

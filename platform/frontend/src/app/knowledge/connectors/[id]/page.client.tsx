@@ -60,7 +60,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -423,7 +422,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
                     ? "Starting..."
                     : connector.lastSyncStatus === "running"
                       ? "Syncing..."
-                      : "Sync Documents Now"}
+                      : "Sync Now"}
                 </Button>
               </span>
             </TooltipTrigger>
@@ -589,19 +588,25 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         ) : (
           <div className="space-y-4">
             {isAutoSync && (
-              <Tabs
+              <Select
                 value={runTypeFilter}
                 onValueChange={(value) => {
                   setRunTypeFilter(value as typeof runTypeFilter);
                   setPageIndex(0);
                 }}
               >
-                <TabsList>
-                  <TabsTrigger value="all">All runs</TabsTrigger>
-                  <TabsTrigger value="content">Documents</TabsTrigger>
-                  <TabsTrigger value="permission">Permissions</TabsTrigger>
-                </TabsList>
-              </Tabs>
+                <SelectTrigger
+                  className="h-9 w-full text-sm sm:w-[200px]"
+                  aria-label="Filter runs"
+                >
+                  <SelectValue placeholder="All runs" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All runs</SelectItem>
+                  <SelectItem value="content">Documents</SelectItem>
+                  <SelectItem value="permission">Permissions</SelectItem>
+                </SelectContent>
+              </Select>
             )}
             <LoadingWrapper
               isPending={isRunsPending}

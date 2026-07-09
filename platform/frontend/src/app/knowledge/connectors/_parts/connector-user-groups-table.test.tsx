@@ -36,12 +36,14 @@ function mockGroups() {
               accountId: "acc-alice",
               displayName: "Alice A",
               email: "alice@example.com",
+              accountType: "atlassian",
               user: { id: "user-1", name: "Alice" },
             },
             {
               accountId: "acc-bob",
               displayName: "Bob B",
               email: "bob@example.com",
+              accountType: "atlassian",
               user: null,
             },
             // Email hidden upstream: recorded, shown, fail-closed.
@@ -49,6 +51,16 @@ function mockGroups() {
               accountId: "acc-dave",
               displayName: "Dave D",
               email: null,
+              accountType: null,
+              user: null,
+            },
+            // Add-on/bot account: no email BY NATURE — excluded from
+            // resolution stats, labeled instead of read as a credential gap.
+            {
+              accountId: "acc-bot",
+              displayName: "Automation for Jira",
+              email: null,
+              accountType: "app",
               user: null,
             },
           ],
@@ -90,8 +102,10 @@ describe("ConnectorUserGroupsTable", () => {
     expect(screen.getByText("bob@example.com")).toBeInTheDocument();
     // Past the 2 visible badges, members collapse behind +N more — the
     // hidden-email member is still listed (in the tooltip), not dropped.
-    expect(screen.getByText("+1 more")).toBeInTheDocument();
+    expect(screen.getByText("+2 more")).toBeInTheDocument();
     expect(screen.getByText("Dave D · email hidden")).toBeInTheDocument();
+    // The bot is labeled as an app account, not as a hidden-email human.
+    expect(screen.getByText("Automation for Jira · app")).toBeInTheDocument();
     // A group granted on documents but with no snapshot members is called out.
     expect(screen.getByText(/No resolvable members/)).toBeInTheDocument();
   });
@@ -108,12 +122,14 @@ describe("ConnectorUserGroupsTable", () => {
 
     expect(screen.getByText("Groups")).toBeInTheDocument();
     expect(screen.getByText("Resolved")).toBeInTheDocument();
-    // 3 distinct accounts: alice (resolved), bob (no matching user),
-    // dave (email hidden) — 1 resolved, 2 unresolved.
+    // 3 distinct human accounts: alice (resolved), bob (no matching user),
+    // dave (email hidden) — the add-on bot is counted separately, NOT as an
+    // unresolvable human.
     expect(screen.getByText("Unresolved")).toBeInTheDocument();
     expect(
       screen.getByText("1 email hidden · 1 no matching user"),
     ).toBeInTheDocument();
+    expect(screen.getByText("+ 1 app account")).toBeInTheDocument();
   });
 
   it("diagnoses unresolved members with the credential-scope hint and the invite path", () => {
@@ -160,6 +176,12 @@ describe("ConnectorUserGroupsTable", () => {
   });
 
   it("filters to fully resolved groups and reports when nothing matches", async () => {
+    // Radix Select relies on pointer-capture + scrollIntoView, which jsdom
+    // does not implement.
+    window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+    window.HTMLElement.prototype.setPointerCapture = vi.fn();
+    window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
     const { userEvent } = await import("@testing-library/user-event").then(
       (m) => ({ userEvent: m.default.setup() }),
     );
@@ -174,12 +196,22 @@ describe("ConnectorUserGroupsTable", () => {
 
     // Neither group is fully resolved (engineers has unresolved members,
     // ghosts has none at all).
-    await userEvent.click(screen.getByRole("tab", { name: "Fully resolved" }));
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Filter groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Fully resolved" }),
+    );
     expect(
       screen.getByText("No groups match your search or filter."),
     ).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: "Needs attention" }));
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Filter groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Needs attention" }),
+    );
     expect(screen.getByText("engineers")).toBeInTheDocument();
     expect(screen.getByText("ghosts")).toBeInTheDocument();
   });
