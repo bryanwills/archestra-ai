@@ -520,6 +520,10 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         </Button>
 
         <div className="rounded-lg border p-4">
+          {/* Two symmetric rows on wide screens: the content family (Last
+              Content Sync / Content Sync Schedule) sits directly above its
+              permissions counterpart (Last Permissions Sync / Permissions
+              Sync Frequency). */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm">
             <MetadataItem label="Last Content Sync">
               <div>
@@ -528,48 +532,47 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
                   : "Never"}
               </div>
             </MetadataItem>
-            <MetadataItem label="Documents">
-              <div>{connector.totalDocsIngested.toLocaleString()}</div>
-            </MetadataItem>
             <MetadataItem label="Content Sync Schedule">
               <div>{formatCronSchedule(connector.schedule)}</div>
             </MetadataItem>
+            <MetadataItem label="Documents">
+              <div>{connector.totalDocsIngested.toLocaleString()}</div>
+            </MetadataItem>
             <KnowledgeBasesMetadataItem connectorId={connectorId} />
-            {isAutoSync && coverage && (
+            {isAutoSync && (
               <>
-                <MetadataItem label="Permissions Coverage">
-                  {coverage.totalDocuments === 0 ? (
-                    <div className="text-muted-foreground">
-                      No documents yet
-                    </div>
-                  ) : coverage.failClosedDocuments > 0 ? (
-                    <div
-                      className="text-amber-600"
-                      title="Access-restricted until a permission sync tags them with their source permissions"
-                    >
-                      {coverage.failClosedDocuments.toLocaleString()} document
-                      {coverage.failClosedDocuments === 1 ? "" : "s"} awaiting
-                      sync
-                    </div>
-                  ) : (
-                    <div>
-                      {(
-                        coverage.totalDocuments - coverage.failClosedDocuments
-                      ).toLocaleString()}{" "}
-                      / {coverage.totalDocuments.toLocaleString()} documents
-                      tagged
-                    </div>
-                  )}
-                </MetadataItem>
-                <MetadataItem label="Next Permissions Sync">
+                <MetadataItem label="Last Permissions Sync">
                   <div>
                     {permissionSyncRunning
                       ? "Syncing now…"
-                      : coverage.nextScheduledAt
-                        ? formatDate({ date: coverage.nextScheduledAt })
-                        : "—"}
+                      : connector.lastPermissionSyncAt
+                        ? formatDate({ date: connector.lastPermissionSyncAt })
+                        : "Never"}
                   </div>
                 </MetadataItem>
+                <MetadataItem label="Permissions Sync Frequency">
+                  <div>
+                    {formatSyncFrequency(
+                      connector.permissionSyncIntervalSeconds,
+                    )}
+                  </div>
+                </MetadataItem>
+                {coverage && coverage.totalDocuments > 0 && (
+                  <MetadataItem label="Permissions Coverage">
+                    {coverage.failClosedDocuments > 0 ? (
+                      <div
+                        className="text-amber-600"
+                        title="Access-restricted until a permission sync tags them with their source permissions"
+                      >
+                        {coverage.failClosedDocuments.toLocaleString()} document
+                        {coverage.failClosedDocuments === 1 ? "" : "s"} awaiting
+                        sync
+                      </div>
+                    ) : (
+                      <div>All documents tagged</div>
+                    )}
+                  </MetadataItem>
+                )}
               </>
             )}
           </div>
@@ -666,7 +669,11 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
           {stats.failClosed.toLocaleString()} fail-closed
         </span>
         <span className="text-muted-foreground"> · </span>
-        {stats.groupsSynced.toLocaleString()} groups
+        {stats.groupSyncFailed ? (
+          <span className="text-amber-600">group sync failed</span>
+        ) : (
+          <>{stats.groupsSynced.toLocaleString()} groups</>
+        )}
       </div>
     );
   }
@@ -687,6 +694,16 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
       {(run.documentsIngested ?? 0).toLocaleString()} ingested
     </div>
   );
+}
+
+/** "Every 30 minutes" / "Every 6 hours" from an interval in seconds. */
+function formatSyncFrequency(intervalSeconds: number): string {
+  const minutes = Math.round(intervalSeconds / 60);
+  if (minutes < 60 || minutes % 60 !== 0) {
+    return `Every ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const hours = minutes / 60;
+  return `Every ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
 function KnowledgeBasesMetadataItem({ connectorId }: { connectorId: string }) {

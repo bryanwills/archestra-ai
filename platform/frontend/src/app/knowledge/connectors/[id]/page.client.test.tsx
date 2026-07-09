@@ -83,6 +83,8 @@ function makeConnector(
     lastSyncAt: null,
     totalDocsIngested: 0,
     schedule: null,
+    lastPermissionSyncAt: null,
+    permissionSyncIntervalSeconds: 1800,
     ...overrides,
   };
 }
@@ -373,7 +375,9 @@ describe("ConnectorDetailPage", () => {
       expect(
         screen.getByText(/40 documents awaiting sync/),
       ).toBeInTheDocument();
-      expect(screen.getByText("Next Permissions Sync")).toBeInTheDocument();
+      // The permissions row mirrors the content row's Last/cadence items.
+      expect(screen.getByText("Last Permissions Sync")).toBeInTheDocument();
+      expect(screen.getByText("Every 30 minutes")).toBeInTheDocument();
 
       await userEvent.click(
         screen.getByRole("button", { name: "More actions" }),
@@ -404,9 +408,9 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
-      expect(
-        screen.getByText(/22,915 \/ 22,915 documents tagged/),
-      ).toBeInTheDocument();
+      // Full coverage is the unremarkable state — a terse confirmation, not
+      // a ratio that duplicates the Documents count.
+      expect(screen.getByText("All documents tagged")).toBeInTheDocument();
     });
 
     it("shows Syncing now and disables the menu item while a pass runs", async () => {
