@@ -348,7 +348,7 @@ describe("ConnectorDetailPage", () => {
       expect(screen.getByText("during content sync")).toBeInTheDocument();
     });
 
-    it("shows the coverage banner with pending documents and triggers a manual sync", async () => {
+    it("shows awaiting-sync coverage in the metadata block and triggers a manual sync from the actions menu", async () => {
       const { userEvent } = await import("@testing-library/user-event").then(
         (m) => ({ userEvent: m.default.setup() }),
       );
@@ -369,11 +369,17 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
+      expect(screen.getByText("Permissions Coverage")).toBeInTheDocument();
       expect(
-        screen.getByText(/40 documents awaiting permission sync/),
+        screen.getByText(/40 documents awaiting sync/),
       ).toBeInTheDocument();
+      expect(screen.getByText("Next Permissions Sync")).toBeInTheDocument();
+
       await userEvent.click(
-        screen.getByRole("button", { name: /Sync permissions now/ }),
+        screen.getByRole("button", { name: "More actions" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: /Sync Permissions Now/ }),
       );
       expect(mockTriggerPermissionSyncMutate).toHaveBeenCalledWith(
         CONNECTOR_ID,
@@ -403,7 +409,42 @@ describe("ConnectorDetailPage", () => {
       ).toBeInTheDocument();
     });
 
-    it("hides the coverage banner for non-auto-sync connectors", () => {
+    it("shows Syncing now and disables the menu item while a pass runs", async () => {
+      const { userEvent } = await import("@testing-library/user-event").then(
+        (m) => ({ userEvent: m.default.setup() }),
+      );
+      mockUseConnector.mockReturnValue({
+        data: makeConnector({ visibility: "auto-sync-permissions" }),
+        isPending: false,
+        isLoadingError: false,
+        refetch: vi.fn(),
+      });
+      mockUseConnectorPermissionCoverage.mockReturnValue({
+        data: {
+          totalDocuments: 100,
+          failClosedDocuments: 0,
+          permissionSyncRunning: true,
+          nextScheduledAt: "2026-07-08T16:00:00Z",
+        },
+      });
+
+      render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
+
+      expect(screen.getByText("Syncing now…")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More actions" }),
+      );
+      const item = await screen.findByRole("menuitem", {
+        name: /Permissions syncing…/,
+      });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("hides permission coverage and the sync menu item for non-auto-sync connectors", async () => {
+      const { userEvent } = await import("@testing-library/user-event").then(
+        (m) => ({ userEvent: m.default.setup() }),
+      );
       mockUseConnector.mockReturnValue({
         data: makeConnector({ visibility: "org-wide" }),
         isPending: false,
@@ -422,10 +463,15 @@ describe("ConnectorDetailPage", () => {
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
       expect(
-        screen.queryByText(/Permissions coverage/),
+        screen.queryByText("Permissions Coverage"),
       ).not.toBeInTheDocument();
+      expect(screen.queryByText(/awaiting sync/)).not.toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More actions" }),
+      );
       expect(
-        screen.queryByText(/awaiting permission sync/),
+        screen.queryByRole("menuitem", { name: /Sync Permissions/ }),
       ).not.toBeInTheDocument();
     });
 

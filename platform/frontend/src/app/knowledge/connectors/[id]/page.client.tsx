@@ -13,8 +13,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  ShieldAlert,
-  ShieldCheck,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -178,6 +176,14 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
   const syncConnector = useSyncConnector();
   const forceResync = useForceResyncConnector();
   const testConnection = useTestConnectorConnection();
+  // Coverage feeds the Permissions metadata items and the Sync Permissions
+  // menu item; the query polls while a pass runs so both stay live.
+  const { data: coverage } = useConnectorPermissionCoverage({
+    connectorId,
+    enabled: isAutoSync,
+  });
+  const triggerPermissionSync = useTriggerPermissionSync();
+  const permissionSyncRunning = coverage?.permissionSyncRunning ?? false;
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isForceResyncOpen, setIsForceResyncOpen] = useState(false);
 
@@ -221,11 +227,15 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
   // Started, Completed) line up across rows; the family-specific counters
   // collapse into a compact Results summary (the details dialog has the full
   // numbers), and a Type badge tells the families apart when interleaved.
+  // The shared Table is `table-fixed`, so every column needs an explicit
+  // size — otherwise all columns get equal widths and the long Results
+  // summary renders under the Logs column.
   const columns: ColumnDef<ConnectorRunItem>[] = [
     {
       id: "status",
       accessorKey: "status",
       header: "Status",
+      size: 150,
       cell: ({ row }) => {
         const run = row.original;
         if (run.runType === "permission") {
@@ -271,6 +281,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
           {
             id: "runType",
             header: "Type",
+            size: 110,
             cell: ({ row }) => (
               <Badge variant="outline" className="text-xs font-normal">
                 {row.original.runType === "permission"
@@ -285,6 +296,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       id: "startedAt",
       accessorKey: "startedAt",
       header: "Started",
+      size: 140,
       cell: ({ row }) => (
         <div className="font-mono text-xs">
           {formatDate({ date: row.original.startedAt })}
@@ -294,6 +306,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     {
       id: "completedAt",
       header: "Completed",
+      size: 140,
       cell: ({ row }) => (
         <div className="font-mono text-xs">
           {row.original.completedAt
@@ -305,11 +318,14 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     {
       id: "results",
       header: "Results",
+      size: 320,
+      minSize: 220,
       cell: ({ row }) => <RunResultsSummary run={row.original} />,
     },
     {
       id: "logs",
       header: "Logs",
+      size: 60,
       cell: ({ row }) => {
         return (
           <Tooltip>
@@ -415,11 +431,31 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
           </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-8 w-8">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="More actions"
+              >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {isAutoSync && (
+                <DropdownMenuItem
+                  onClick={() => triggerPermissionSync.mutate(connectorId)}
+                  disabled={
+                    triggerPermissionSync.isPending || permissionSyncRunning
+                  }
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {permissionSyncRunning
+                    ? "Permissions syncing…"
+                    : triggerPermissionSync.isPending
+                      ? "Starting..."
+                      : "Sync Permissions Now"}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={handleTestConnection}
                 disabled={testConnection.isPending}
@@ -485,7 +521,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
 
         <div className="rounded-lg border p-4">
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm">
-            <MetadataItem label="Last Sync">
+            <MetadataItem label="Last Content Sync">
               <div>
                 {connector.lastSyncAt
                   ? formatDate({ date: connector.lastSyncAt })
@@ -493,18 +529,51 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
               </div>
             </MetadataItem>
             <MetadataItem label="Documents">
-              <div>{connector.totalDocsIngested}</div>
+              <div>{connector.totalDocsIngested.toLocaleString()}</div>
             </MetadataItem>
-            <MetadataItem label="Schedule">
+            <MetadataItem label="Content Sync Schedule">
               <div>{formatCronSchedule(connector.schedule)}</div>
             </MetadataItem>
             <KnowledgeBasesMetadataItem connectorId={connectorId} />
+            {isAutoSync && coverage && (
+              <>
+                <MetadataItem label="Permissions Coverage">
+                  {coverage.totalDocuments === 0 ? (
+                    <div className="text-muted-foreground">
+                      No documents yet
+                    </div>
+                  ) : coverage.failClosedDocuments > 0 ? (
+                    <div
+                      className="text-amber-600"
+                      title="Access-restricted until a permission sync tags them with their source permissions"
+                    >
+                      {coverage.failClosedDocuments.toLocaleString()} document
+                      {coverage.failClosedDocuments === 1 ? "" : "s"} awaiting
+                      sync
+                    </div>
+                  ) : (
+                    <div>
+                      {(
+                        coverage.totalDocuments - coverage.failClosedDocuments
+                      ).toLocaleString()}{" "}
+                      / {coverage.totalDocuments.toLocaleString()} documents
+                      tagged
+                    </div>
+                  )}
+                </MetadataItem>
+                <MetadataItem label="Next Permissions Sync">
+                  <div>
+                    {permissionSyncRunning
+                      ? "Syncing now…"
+                      : coverage.nextScheduledAt
+                        ? formatDate({ date: coverage.nextScheduledAt })
+                        : "—"}
+                  </div>
+                </MetadataItem>
+              </>
+            )}
           </div>
         </div>
-
-        {isAutoSync && currentTab === "runs" && (
-          <PermissionCoverageBanner connectorId={connectorId} />
-        )}
 
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
@@ -581,7 +650,7 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
     const stats = run.stats;
     if (!stats) return <div className="text-muted-foreground">-</div>;
     return (
-      <div className="text-sm whitespace-nowrap">
+      <div className="text-sm">
         {stats.docsScanned.toLocaleString()}
         {stats.totalDocs > 0 && (
           <span className="text-muted-foreground">
@@ -605,7 +674,7 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
   const processed = run.documentsProcessed ?? 0;
   const total = run.totalItems;
   return (
-    <div className="text-sm whitespace-nowrap">
+    <div className="text-sm">
       {processed.toLocaleString()}
       {total != null && total > 0 && (
         <span className="text-muted-foreground">
@@ -616,78 +685,6 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
       processed
       <span className="text-muted-foreground"> · </span>
       {(run.documentsIngested ?? 0).toLocaleString()} ingested
-    </div>
-  );
-}
-
-/**
- * Live ACL coverage for an auto-sync-permissions connector. Answers "is
- * everything ingested reconciled right now?" directly instead of leaving the
- * admin to infer it from run history: shows tagged vs fail-closed counts, the
- * next scheduled pass, and a manual trigger for agency over the gap.
- */
-function PermissionCoverageBanner({ connectorId }: { connectorId: string }) {
-  const { data: coverage } = useConnectorPermissionCoverage({
-    connectorId,
-    enabled: true,
-  });
-  const triggerPermissionSync = useTriggerPermissionSync();
-
-  if (!coverage || coverage.totalDocuments === 0) return null;
-
-  const pending = coverage.failClosedDocuments;
-  const tagged = coverage.totalDocuments - pending;
-  const fullyCovered = pending === 0;
-
-  return (
-    <div
-      className={`flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-4 text-sm ${
-        fullyCovered ? "" : "border-amber-500/40 bg-amber-500/5"
-      }`}
-    >
-      {fullyCovered ? (
-        <ShieldCheck className="h-4 w-4 shrink-0 text-green-600" />
-      ) : (
-        <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
-      )}
-      <div className="min-w-0">
-        <span className="font-medium">Permissions coverage:</span>{" "}
-        {fullyCovered ? (
-          <>
-            {tagged.toLocaleString()} /{" "}
-            {coverage.totalDocuments.toLocaleString()} documents tagged
-          </>
-        ) : (
-          <>
-            {pending.toLocaleString()} document{pending === 1 ? "" : "s"}{" "}
-            awaiting permission sync (access-restricted until tagged)
-          </>
-        )}
-      </div>
-      <div className="ml-auto flex items-center gap-3">
-        {coverage.permissionSyncRunning ? (
-          <span className="text-muted-foreground">
-            Permission sync running…
-          </span>
-        ) : (
-          coverage.nextScheduledAt && (
-            <span className="text-muted-foreground">
-              Next pass: {formatDate({ date: coverage.nextScheduledAt })}
-            </span>
-          )
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => triggerPermissionSync.mutate(connectorId)}
-          disabled={
-            triggerPermissionSync.isPending || coverage.permissionSyncRunning
-          }
-        >
-          <RefreshCw className="h-4 w-4" />
-          {coverage.permissionSyncRunning ? "Syncing…" : "Sync permissions now"}
-        </Button>
-      </div>
     </div>
   );
 }
