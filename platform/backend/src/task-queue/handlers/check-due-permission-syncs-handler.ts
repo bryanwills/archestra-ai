@@ -17,6 +17,23 @@ import { withinResumeBudget } from "./connector-resume-budget";
  * content-run recovery is never overloaded with permission work.
  */
 export async function handleCheckDuePermissionSyncs(): Promise<void> {
+  // Recovery order matters: a hard shutdown mid-pass leaves BOTH an
+  // expired-lease run (still 'running') and its task stuck in 'processing'.
+  // Reap the run first so the orphan requeue below sees no live run and
+  // revives the task in the same tick; the requeue runs before the due loop
+  // so a revived task counts as active instead of double-enqueuing.
+  await reapExpiredPermissionRuns();
+
+  const orphaned = await TaskModel.requeueOrphanedPermissionSyncTasks(
+    ORPHANED_TASK_GRACE_SECONDS,
+  );
+  if (orphaned.length > 0) {
+    logger.warn(
+      { taskIds: orphaned },
+      "Requeued permission-sync tasks orphaned by a worker restart",
+    );
+  }
+
   const connectors = await KnowledgeBaseConnectorModel.findAllEnabled();
   const autoSyncConnectors = connectors.filter(
     (connector) =>
@@ -64,11 +81,13 @@ export async function handleCheckDuePermissionSyncs(): Promise<void> {
       }
     }
   }
-
-  await reapExpiredPermissionRuns();
 }
 
 // ===== Internal helpers =====
+
+// Well past the dequeue → run-claim gap (seconds) so a task whose pass hasn't
+// created its run row yet is never mistaken for an orphan.
+const ORPHANED_TASK_GRACE_SECONDS = 120;
 
 function connectorSupportsPermissionSync(connectorType: string): boolean {
   try {
@@ -103,6 +122,15 @@ async function reapExpiredPermissionRuns(): Promise<void> {
       );
       continue;
     }
+
+    // The orphan requeue above may have already revived this connector's
+    // interrupted task; a second enqueue would burn resume budget on a
+    // redundant pass.
+    const alreadyQueued = await TaskModel.hasPendingOrProcessing(
+      "permission_sync",
+      run.connectorId,
+    );
+    if (alreadyQueued) continue;
 
     await taskQueueService.enqueue({
       taskType: "permission_sync",

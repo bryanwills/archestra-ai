@@ -151,6 +151,39 @@ class TaskModel {
     return [...dead, ...retried];
   }
 
+  /**
+   * Requeues `permission_sync` tasks orphaned by a hard worker shutdown: rows
+   * stuck in `processing` whose connector has no running permission run. A
+   * genuinely in-flight pass holds a claimed run row for its whole duration
+   * (dequeue → claim is seconds, covered by the grace window), so a runless
+   * processing task past the grace can only be an orphan. Without this it
+   * reads as "sync running" — blocking manual triggers and the scheduler —
+   * until the generic 1-hour stuck sweep. Grace is DB-clock-relative for the
+   * same timezone reason as resetStuckTasks.
+   */
+  static async requeueOrphanedPermissionSyncTasks(
+    graceSeconds: number,
+  ): Promise<string[]> {
+    const { rows } = await db.execute<{ id: string }>(sql`
+      UPDATE tasks t
+      SET status = 'pending',
+          started_at = NULL,
+          scheduled_for = NOW(),
+          attempt = GREATEST(t.attempt - 1, 0)
+      WHERE t.task_type = 'permission_sync'
+        AND t.status = 'processing'
+        AND t.started_at < NOW() - make_interval(secs => ${graceSeconds})
+        AND NOT EXISTS (
+          SELECT 1 FROM connector_runs r
+          WHERE r.connector_id::text = t.payload->>'connectorId'
+            AND r.run_type = 'permission'
+            AND r.status = 'running'
+        )
+      RETURNING t.id
+    `);
+    return rows.map((row) => row.id);
+  }
+
   static async releaseToQueue(ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
 

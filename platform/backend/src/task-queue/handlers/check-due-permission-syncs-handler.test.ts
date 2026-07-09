@@ -310,4 +310,159 @@ describe("handleCheckDuePermissionSyncs", () => {
       expect(await countPermissionSyncTasks(connector.id)).toBe(0);
     });
   });
+
+  describe("orphaned processing tasks", () => {
+    // A hard worker shutdown leaves the in-flight task stuck in 'processing'
+    // with no drain; started_at anchors to the DB clock like dequeue does.
+    async function wedgeIntoProcessing(taskId: string, ageSeconds: number) {
+      await db.execute(sql`
+        UPDATE tasks SET status = 'processing', attempt = 1,
+          started_at = NOW() - make_interval(secs => ${ageSeconds})
+        WHERE id = ${taskId}
+      `);
+    }
+
+    async function taskStatus(taskId: string): Promise<string | undefined> {
+      const { rows } = await db.execute<{ status: string }>(
+        sql`SELECT status FROM tasks WHERE id = ${taskId}`,
+      );
+      return rows[0]?.status;
+    }
+
+    /** Auto-sync connector whose schedule branch stays quiet. */
+    async function makeQuietConnector(fixtures: {
+      makeOrganization: () => Promise<{ id: string }>;
+      makeKnowledgeBase: (orgId: string) => Promise<{ id: string }>;
+      makeKnowledgeBaseConnector: (
+        kbId: string,
+        orgId: string,
+        overrides: Record<string, unknown>,
+      ) => Promise<{ id: string }>;
+    }) {
+      const org = await fixtures.makeOrganization();
+      const kb = await fixtures.makeKnowledgeBase(org.id);
+      const connector = await fixtures.makeKnowledgeBaseConnector(
+        kb.id,
+        org.id,
+        {
+          visibility: "auto-sync-permissions",
+          connectorType: "github",
+          enabled: true,
+        },
+      );
+      await KnowledgeBaseConnectorModel.update(connector.id, {
+        permissionSyncIntervalSeconds: HUGE_INTERVAL_SECONDS,
+        lastPermissionSyncAt: PAST(),
+      });
+      return connector;
+    }
+
+    test("requeues a processing task with no running run past the grace window", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const connector = await makeQuietConnector({
+        makeOrganization,
+        makeKnowledgeBase,
+        makeKnowledgeBaseConnector,
+      });
+      const task = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      await wedgeIntoProcessing(task.id, 5 * 60);
+
+      await handleCheckDuePermissionSyncs();
+
+      expect(await taskStatus(task.id)).toBe("pending");
+      // Requeued, not duplicated: the revived task counts as active for the
+      // due loop.
+      expect(await countPermissionSyncTasks(connector.id)).toBe(1);
+    });
+
+    test("leaves a processing task alone while its pass holds a running run", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const connector = await makeQuietConnector({
+        makeOrganization,
+        makeKnowledgeBase,
+        makeKnowledgeBaseConnector,
+      });
+      const task = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      await wedgeIntoProcessing(task.id, 5 * 60);
+      // The pass is genuinely alive: claimed run with an unexpired lease.
+      await ConnectorRunModel.create({
+        connectorId: connector.id,
+        runType: "permission",
+        status: "running",
+        startedAt: new Date(),
+        leaseExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      });
+
+      await handleCheckDuePermissionSyncs();
+
+      expect(await taskStatus(task.id)).toBe("processing");
+    });
+
+    test("leaves a recently started processing task alone (dequeue → claim gap)", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const connector = await makeQuietConnector({
+        makeOrganization,
+        makeKnowledgeBase,
+        makeKnowledgeBaseConnector,
+      });
+      const task = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      await wedgeIntoProcessing(task.id, 10);
+
+      await handleCheckDuePermissionSyncs();
+
+      expect(await taskStatus(task.id)).toBe("processing");
+    });
+
+    test("a crash mid-pass recovers to exactly one requeued task in one tick", async ({
+      makeOrganization,
+      makeKnowledgeBase,
+      makeKnowledgeBaseConnector,
+    }) => {
+      const connector = await makeQuietConnector({
+        makeOrganization,
+        makeKnowledgeBase,
+        makeKnowledgeBaseConnector,
+      });
+      // The full crash aftermath: an expired-lease run AND its orphaned task.
+      const run = await ConnectorRunModel.create({
+        connectorId: connector.id,
+        runType: "permission",
+        status: "running",
+        startedAt: PAST(),
+        leaseExpiresAt: new Date(Date.now() - 60_000),
+      });
+      const task = await TaskModel.create({
+        taskType: "permission_sync",
+        payload: { connectorId: connector.id },
+      });
+      await wedgeIntoProcessing(task.id, 5 * 60);
+
+      await handleCheckDuePermissionSyncs();
+
+      // Run reaped, orphan revived, and the reaper's resume enqueue de-duped
+      // against it — one task total, ready to resume from the checkpoint.
+      const reaped = await ConnectorRunModel.findById(run.id);
+      expect(reaped?.status).toBe("partial");
+      expect(await taskStatus(task.id)).toBe("pending");
+      expect(await countPermissionSyncTasks(connector.id)).toBe(1);
+    });
+  });
 });
