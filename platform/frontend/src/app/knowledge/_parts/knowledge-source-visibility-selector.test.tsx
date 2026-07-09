@@ -63,14 +63,11 @@ describe("KnowledgeSourceVisibilitySelector — auto-sync-permissions", () => {
     expect(button).toHaveTextContent("Enterprise feature");
   });
 
-  it("shows the synced-access note and no team control when auto-sync is selected", () => {
+  it("shows no team control when auto-sync is selected", () => {
     renderSelector({
       visibility: "auto-sync-permissions",
       supportsAutoSync: true,
     });
-    expect(
-      screen.getByText(/Access is synced from the source system/),
-    ).toBeInTheDocument();
     expect(screen.queryByText("Teams")).not.toBeInTheDocument();
   });
 });

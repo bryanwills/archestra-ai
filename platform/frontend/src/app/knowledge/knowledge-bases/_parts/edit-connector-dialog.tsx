@@ -300,13 +300,6 @@ export function EditConnectorDialog({
             supportsAutoSync={connectorSupportsAutoSync(connectorType)}
           />
 
-          {visibility === "auto-sync-permissions" && (
-            <PermissionSyncIntervalPicker
-              form={form}
-              name="permissionSyncIntervalSeconds"
-            />
-          )}
-
           <div className="border-t" />
 
           {urlConfig && (
@@ -375,7 +368,18 @@ export function EditConnectorDialog({
               <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-4 space-y-4">
-              <SchedulePicker form={form} name="schedule" />
+              <SchedulePicker
+                form={form}
+                name="schedule"
+                connectorTypeLabel={typeLabel}
+              />
+              {visibility === "auto-sync-permissions" && (
+                <PermissionSyncIntervalPicker
+                  form={form}
+                  name="permissionSyncIntervalSeconds"
+                  connectorTypeLabel={typeLabel}
+                />
+              )}
               <ConnectorAdvancedConfigFields
                 connectorType={connectorType}
                 form={form}

@@ -75,18 +75,22 @@ Auto-sync permissions mirrors the source system's own access control into per-do
 
 Supported connectors: **GitHub**, **Confluence**, and **Jira**. Support for Google Drive, Salesforce, and SharePoint is planned.
 
-**Identity model.** The join key is email, end to end. A document shared with an upstream user is visible when that user's Archestra email matches their upstream email. Each upstream group is expanded to its member emails on a periodic snapshot; at query time your email resolves your group memberships through a local join, so there are no upstream calls on the query path. Emails are trimmed and case-folded before matching.
+**Identity model.** The join key is email, end to end. A document shared with an upstream user is visible when that user's Archestra email matches their upstream email. Each upstream group is expanded to its full membership on a periodic snapshot — every member is recorded with their stable upstream account id, display name, and email when the source exposes it; at query time your email resolves your group memberships through a local join, so there are no upstream calls on the query path. Emails are trimmed and case-folded before matching. A member whose email the source hides is still recorded and shown on the connector's **User Groups** tab as unresolvable, but stays fail-closed until their email becomes visible to the connector's credential.
 
-**Permission-sync pass.** A single pass per connector re-derives every document's ACL. Each run is a full reconcile: it writes only what changed — no re-embedding — and fail-closes anything no longer visible upstream. A pass runs whenever a content sync ingests new documents, when triggered manually from the connector page, and on the connector's **Permission Sync Interval** (set in the connector form, default every 30 minutes) — measured from the last pass, whatever started it, so a manual run pushes the next scheduled one a full interval out. It runs in an isolated job lane, so permission sync never blocks content sync.
+**Permission-sync pass.** A single pass per connector re-derives every document's ACL. Each run is a full reconcile: it writes only what changed — no re-embedding — and fail-closes anything no longer visible upstream. A pass runs whenever a content sync ingests new documents, when triggered manually from the connector page, and on the connector's **Permissions Sync Frequency** (set in the connector form's Advanced section, default every 30 minutes) — measured from the last pass, whatever started it, so a manual run pushes the next scheduled one a full interval out. It runs in an isolated job lane, so permission sync never blocks content sync.
 
 Documents with empty or unknown permissions get an empty ACL, so only admins see them.
 
+**Upstream email visibility — what the credential must be able to see.** Each source hides emails behind its own rule, and a credential that can't see them produces a snapshot full of unresolvable (fail-closed) members:
+
+- **Jira and Confluence Cloud** only return another user's email when that user's Atlassian profile has email visibility set to **"Anyone"**. Admin roles on the credential — site admin, organization admin, or user access admin — do **not** unlock hidden emails through the REST API (emails of managed accounts are only exposed via the separate Atlassian organization directory API, which these connectors do not use). The practical fix: have an Atlassian organization admin set managed accounts' email visibility to public, or ask users to set it themselves. Jira/Confluence Server and Data Center generally return emails to any authenticated user.
+- **GitHub** only exposes an email the user has made **public on their profile**; no token scope reveals a private email.
+
 **Limitations:**
 
-- **Upstream email privacy.** GitHub only exposes public emails, and Confluence and Jira Cloud largely hide them. A principal whose email cannot be resolved is fail-closed.
 - **Email is the only join key.** An Archestra user whose email differs from their upstream email will not match.
-- **Eventual consistency.** Newly-changed upstream access stays fail-closed until the next pass. Keep the connector's permission sync interval reasonably short.
-- **Credential scope.** Reading container-level permissions — Confluence space permissions, Jira project schemes, GitHub org teams and collaborator emails — needs adequate admin scope on the connector's credentials.
+- **Eventual consistency.** Newly-changed upstream access stays fail-closed until the next pass. Keep the connector's permissions sync frequency reasonably short.
+- **Credential scope.** Reading container-level permissions — Confluence space permissions, Jira project schemes, GitHub org teams and collaborator emails — needs adequate admin scope on the connector's credentials, and member emails resolve only under the visibility rules above.
 
 ## Supported Connectors
 

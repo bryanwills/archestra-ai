@@ -170,10 +170,10 @@ describe("EditConnectorDialog - Asana", () => {
     });
   });
 
-  it("does not show the permission-sync interval picker for a non-auto-sync connector", () => {
+  it("does not show the permissions sync frequency picker for a non-auto-sync connector", () => {
     renderDialog();
     expect(
-      screen.queryByText("Permission Sync Interval"),
+      screen.queryByText("Permissions Sync Frequency"),
     ).not.toBeInTheDocument();
   });
 
@@ -233,10 +233,14 @@ describe("EditConnectorDialog - permission sync interval (auto-sync)", () => {
     const user = userEvent.setup();
     renderDialog(makeAutoSyncGithubConnector());
 
-    expect(screen.getByText("Permission Sync Interval")).toBeInTheDocument();
+    // The picker lives in the Advanced section, under the content schedule.
+    await user.click(screen.getByRole("button", { name: /Advanced/ }));
+    expect(
+      await screen.findByText("Permissions Sync Frequency"),
+    ).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("combobox", { name: /Permission Sync Interval/ }),
+      screen.getByRole("combobox", { name: /Permissions Sync Frequency/ }),
     );
     // Saved 1800s marks its preset as the selected option.
     expect(

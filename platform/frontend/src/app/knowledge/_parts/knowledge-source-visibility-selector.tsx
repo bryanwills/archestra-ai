@@ -110,16 +110,6 @@ export function KnowledgeSourceVisibilitySelector({
       options={options}
       onValueChange={onVisibilityChange}
     >
-      {/* SPDX-SnippetBegin */}
-      {/* SPDX-SnippetCopyrightText: 2026 Archestra Inc. */}
-      {/* SPDX-License-Identifier: LicenseRef-Archestra-Enterprise */}
-      {visibility === "auto-sync-permissions" && (
-        <p className="text-muted-foreground text-sm">
-          Access is synced from the source system's own permissions on a
-          schedule. Each user sees only the documents they can access upstream.
-        </p>
-      )}
-      {/* SPDX-SnippetEnd */}
       {visibility === "team-scoped" && (
         <div className="space-y-2">
           <Label>

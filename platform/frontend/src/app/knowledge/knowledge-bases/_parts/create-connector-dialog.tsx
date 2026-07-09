@@ -52,6 +52,7 @@ import {
   getConnectorTypeLabel,
   getConnectorUrlConfig,
   getDefaultConnectorConfig,
+  getPermissionSyncCredentialNote,
 } from "./connector-dialog-config";
 import { ConnectorTypeIcon } from "./connector-icons";
 import { PermissionSyncIntervalPicker } from "./permission-sync-interval-picker";
@@ -386,13 +387,6 @@ export function CreateConnectorDialog({
                   supportsAutoSync={connectorSupportsAutoSync(connectorType)}
                 />
 
-                {visibility === "auto-sync-permissions" && (
-                  <PermissionSyncIntervalPicker
-                    form={form}
-                    name="permissionSyncIntervalSeconds"
-                  />
-                )}
-
                 <div className="border-t" />
 
                 {urlConfig && (
@@ -451,6 +445,11 @@ export function CreateConnectorDialog({
                           )}
                         </FormControl>
                         {apiTokenHelpText}
+                        {visibility === "auto-sync-permissions" && (
+                          <FormDescription>
+                            {getPermissionSyncCredentialNote(connectorType)}
+                          </FormDescription>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -463,7 +462,20 @@ export function CreateConnectorDialog({
                     <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="pt-4 space-y-4">
-                    <SchedulePicker form={form} name="schedule" />
+                    <SchedulePicker
+                      form={form}
+                      name="schedule"
+                      connectorTypeLabel={getConnectorTypeLabel(connectorType)}
+                    />
+                    {visibility === "auto-sync-permissions" && (
+                      <PermissionSyncIntervalPicker
+                        form={form}
+                        name="permissionSyncIntervalSeconds"
+                        connectorTypeLabel={getConnectorTypeLabel(
+                          connectorType,
+                        )}
+                      />
+                    )}
                     <ConnectorAdvancedConfigFields
                       connectorType={connectorType}
                       form={form}

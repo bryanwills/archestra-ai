@@ -330,6 +330,27 @@ const AUTO_SYNC_CONNECTOR_TYPES: ReadonlySet<ConnectorType> = new Set([
 export function connectorSupportsAutoSync(type: ConnectorType): boolean {
   return AUTO_SYNC_CONNECTOR_TYPES.has(type);
 }
+
+/**
+ * What the credential must be able to see for auto-sync permissions to
+ * resolve members to users (the email join). Shown under the credential field
+ * when Auto-sync permissions is selected: each source hides emails behind a
+ * specific, non-obvious visibility rule, and a credential without it produces
+ * a snapshot full of unresolvable members.
+ */
+export function getPermissionSyncCredentialNote(
+  type: ConnectorType,
+): string | null {
+  switch (type) {
+    case "jira":
+    case "confluence":
+      return "Auto-sync permissions matches members by email, and Atlassian Cloud only returns another user's email when that user's profile email visibility is set to \"Anyone\" — admin roles on this credential (site, organization, or user access admin) do not unlock hidden emails via the API. Have an Atlassian organization admin set managed accounts' email visibility to public, or those members stay unresolvable.";
+    case "github":
+      return "Auto-sync permissions matches members by their public GitHub profile email. No token scope reveals a private email, so members without a public profile email are recorded but stay unresolvable.";
+    default:
+      return null;
+  }
+}
 // SPDX-SnippetEnd
 
 export function getConnectorUrlConfig(

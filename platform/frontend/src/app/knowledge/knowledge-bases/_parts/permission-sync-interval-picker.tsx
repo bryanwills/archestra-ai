@@ -30,10 +30,12 @@ const INTERVAL_OPTIONS: { seconds: number; label: string }[] = [
 export function PermissionSyncIntervalPicker({
   form,
   name,
+  connectorTypeLabel,
 }: {
   // biome-ignore lint/suspicious/noExplicitAny: form type is generic across different form schemas
   form: UseFormReturn<any>;
   name: string;
+  connectorTypeLabel: string;
 }) {
   return (
     <FormField
@@ -41,7 +43,7 @@ export function PermissionSyncIntervalPicker({
       name={name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>Permission Sync Interval</FormLabel>
+          <FormLabel>Permissions Sync Frequency</FormLabel>
           <Select
             value={String(field.value ?? "")}
             onValueChange={(value) => field.onChange(Number(value))}
@@ -60,10 +62,8 @@ export function PermissionSyncIntervalPicker({
             </SelectContent>
           </Select>
           <FormDescription>
-            The next scheduled permission sync runs this long after the last
-            one. A sync also runs right after new content is ingested, or when
-            triggered manually — each pushes the next scheduled run a full
-            interval out.
+            Pick how often to sync content permissions with your{" "}
+            {connectorTypeLabel} instance
           </FormDescription>
         </FormItem>
       )}
