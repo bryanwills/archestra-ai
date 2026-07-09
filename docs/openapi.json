@@ -161287,6 +161287,9 @@
                           "schedule": {
                             "type": "string"
                           },
+                          "permissionSyncIntervalSeconds": {
+                            "type": "integer"
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -161410,6 +161413,7 @@
                           "secretId",
                           "environmentId",
                           "schedule",
+                          "permissionSyncIntervalSeconds",
                           "enabled",
                           "lastSyncAt",
                           "lastSyncStatus",
@@ -162572,6 +162576,10 @@
                   "schedule": {
                     "type": "string"
                   },
+                  "permissionSyncIntervalSeconds": {
+                    "type": "integer",
+                    "minimum": 900
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -163437,6 +163445,9 @@
                     "schedule": {
                       "type": "string"
                     },
+                    "permissionSyncIntervalSeconds": {
+                      "type": "integer"
+                    },
                     "enabled": {
                       "type": "boolean"
                     },
@@ -163537,6 +163548,7 @@
                     "secretId",
                     "environmentId",
                     "schedule",
+                    "permissionSyncIntervalSeconds",
                     "enabled",
                     "lastSyncAt",
                     "lastSyncStatus",
@@ -164649,6 +164661,9 @@
                     "schedule": {
                       "type": "string"
                     },
+                    "permissionSyncIntervalSeconds": {
+                      "type": "integer"
+                    },
                     "enabled": {
                       "type": "boolean"
                     },
@@ -164752,6 +164767,7 @@
                     "secretId",
                     "environmentId",
                     "schedule",
+                    "permissionSyncIntervalSeconds",
                     "enabled",
                     "lastSyncAt",
                     "lastSyncStatus",
@@ -165766,6 +165782,10 @@
                   "schedule": {
                     "type": "string"
                   },
+                  "permissionSyncIntervalSeconds": {
+                    "type": "integer",
+                    "minimum": 900
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -166632,6 +166652,9 @@
                     "schedule": {
                       "type": "string"
                     },
+                    "permissionSyncIntervalSeconds": {
+                      "type": "integer"
+                    },
                     "enabled": {
                       "type": "boolean"
                     },
@@ -166732,6 +166755,7 @@
                     "secretId",
                     "environmentId",
                     "schedule",
+                    "permissionSyncIntervalSeconds",
                     "enabled",
                     "lastSyncAt",
                     "lastSyncStatus",
@@ -209875,10 +209899,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -210234,7 +210254,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -210834,10 +210853,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -211193,7 +211208,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -212079,10 +212093,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -212438,7 +212448,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -212896,10 +212905,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -213255,7 +213260,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -213721,10 +213725,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -214080,7 +214080,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -214621,10 +214620,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -214980,7 +214975,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -215502,10 +215496,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -215861,7 +215851,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -216317,10 +216306,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -216676,7 +216661,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -216991,11 +216975,6 @@
                   "rerankerModel": {
                     "nullable": true,
                     "type": "string"
-                  },
-                  "permissionSyncSchedule": {
-                    "nullable": true,
-                    "type": "string",
-                    "minLength": 1
                   }
                 }
               }
@@ -217147,10 +217126,6 @@
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     },
                     "rerankerModel": {
-                      "nullable": true,
-                      "type": "string"
-                    },
-                    "permissionSyncSchedule": {
                       "nullable": true,
                       "type": "string"
                     },
@@ -217509,7 +217484,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -217945,10 +217919,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -218304,7 +218274,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
@@ -219053,10 +219022,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "permissionSyncSchedule": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "defaultLlmModel": {
                       "nullable": true,
                       "type": "string"
@@ -219412,7 +219377,6 @@
                     "embeddingChatApiKeyId",
                     "rerankerChatApiKeyId",
                     "rerankerModel",
-                    "permissionSyncSchedule",
                     "defaultLlmModel",
                     "defaultLlmProvider",
                     "defaultModelId",
