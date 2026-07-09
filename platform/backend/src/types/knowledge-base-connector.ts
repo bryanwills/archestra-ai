@@ -123,6 +123,13 @@ export const PermissionSyncRunStatsSchema = z.object({
   failClosed: z.number(),
   groupsSynced: z.number(),
   membershipsUpserted: z.number(),
+  /**
+   * True when the group step failed mid-pass: the membership snapshot was NOT
+   * fully refreshed (documents still reconciled against the previous
+   * snapshot). `membershipsUpserted` only counts batches that actually
+   * persisted. Optional — absent on runs from before this flag existed.
+   */
+  groupSyncFailed: z.boolean().optional(),
   /** True when a content sync was running when this pass started. */
   contentSyncActiveDuringRun: z.boolean(),
 });

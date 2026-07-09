@@ -171427,6 +171427,9 @@
                               "membershipsUpserted": {
                                 "type": "number"
                               },
+                              "groupSyncFailed": {
+                                "type": "boolean"
+                              },
                               "contentSyncActiveDuringRun": {
                                 "type": "boolean"
                               }
@@ -171937,6 +171940,9 @@
                         },
                         "membershipsUpserted": {
                           "type": "number"
+                        },
+                        "groupSyncFailed": {
+                          "type": "boolean"
                         },
                         "contentSyncActiveDuringRun": {
                           "type": "boolean"

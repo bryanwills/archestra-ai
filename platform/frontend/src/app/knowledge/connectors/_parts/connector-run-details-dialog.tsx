@@ -120,13 +120,29 @@ export function ConnectorRunDetailsDialog({
                     </div>
                     <div>
                       <span className="text-muted-foreground">Groups:</span>{" "}
-                      {run.stats.groupsSynced.toLocaleString()}
+                      <span
+                        className={
+                          run.stats.groupSyncFailed
+                            ? "text-amber-600"
+                            : undefined
+                        }
+                      >
+                        {run.stats.groupsSynced.toLocaleString()}
+                      </span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">
                         Memberships:
                       </span>{" "}
-                      {run.stats.membershipsUpserted.toLocaleString()}
+                      <span
+                        className={
+                          run.stats.groupSyncFailed
+                            ? "text-amber-600"
+                            : undefined
+                        }
+                      >
+                        {run.stats.membershipsUpserted.toLocaleString()}
+                      </span>
                     </div>
                   </>
                 )}
@@ -145,6 +161,15 @@ export function ConnectorRunDetailsDialog({
                   </div>
                 )}
               </div>
+
+              {isPermissionRun && run.stats?.groupSyncFailed && (
+                <p className="text-xs text-amber-600">
+                  The group membership refresh failed mid-pass — the counts
+                  above reflect only what actually persisted, and users keep
+                  resolving against the previous group snapshot until a pass
+                  completes cleanly.
+                </p>
+              )}
 
               {isPermissionRun && run.stats?.contentSyncActiveDuringRun && (
                 <p className="text-xs text-muted-foreground">

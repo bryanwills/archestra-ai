@@ -269,6 +269,12 @@ class PermissionSyncService {
       // (now flagged stale, but `findGroupTokensForUser` ignores the flag) stay
       // resolvable until a later pass enumerates cleanly. ----
       if (connectorImpl.syncGroups) {
+        // Counted separately from `stats` so the persisted numbers stay
+        // honest on failure: `membershipsUpserted` only ever reflects batches
+        // that actually landed (a mid-pass throw once reported 75 upserted
+        // memberships while zero persisted).
+        let groupsEnumerated = 0;
+        let membershipsPersisted = 0;
         try {
           await KbExternalUserGroupModel.markStaleByConnector(connectorId);
           let pending: InsertKbExternalUserGroup[] = [];
@@ -278,8 +284,7 @@ class PermissionSyncService {
             cursor: null,
             readIngestedDocuments,
           })) {
-            stats.groupsSynced += 1;
-            stats.membershipsUpserted += group.members.length;
+            groupsEnumerated += 1;
             for (const member of group.members) {
               // Every member is persisted — a hidden upstream email is stored
               // as NULL (fail-closed at resolution, visible to admins) rather
@@ -296,18 +301,33 @@ class PermissionSyncService {
             }
             if (pending.length >= this.batchSize) {
               await KbExternalUserGroupModel.upsertMany(pending);
+              membershipsPersisted += pending.length;
               pending = [];
               await yieldToEventLoop();
             }
           }
           if (pending.length > 0) {
             await KbExternalUserGroupModel.upsertMany(pending);
+            membershipsPersisted += pending.length;
           }
           // Sweep only after enumeration finished (completion-gated).
           await KbExternalUserGroupModel.deleteStaleByConnector(connectorId);
+          stats.groupsSynced = groupsEnumerated;
+          stats.membershipsUpserted = membershipsPersisted;
         } catch (error) {
+          stats.groupsSynced = groupsEnumerated;
+          stats.membershipsUpserted = membershipsPersisted;
+          stats.groupSyncFailed = true;
           runLog.warn(
-            { error: extractErrorMessage(error) },
+            {
+              error: extractErrorMessage(error),
+              // Query errors (e.g. Drizzle) carry the actionable Postgres
+              // error in `cause`, not in the message.
+              cause:
+                error instanceof Error && error.cause
+                  ? extractErrorMessage(error.cause)
+                  : undefined,
+            },
             "Permission sync group step failed; continuing to document reconcile with the previous group snapshot",
           );
           metrics.rag.reportPermissionSyncGroupFailure(connector.connectorType);

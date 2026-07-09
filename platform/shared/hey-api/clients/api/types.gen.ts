@@ -44615,6 +44615,7 @@ export type GetConnectorRunsResponses = {
                 failClosed: number;
                 groupsSynced: number;
                 membershipsUpserted: number;
+                groupSyncFailed?: boolean;
                 contentSyncActiveDuringRun: boolean;
             } | null;
             createdAt: string;
@@ -44738,6 +44739,7 @@ export type GetConnectorRunResponses = {
             failClosed: number;
             groupsSynced: number;
             membershipsUpserted: number;
+            groupSyncFailed?: boolean;
             contentSyncActiveDuringRun: boolean;
         } | null;
         createdAt: string;

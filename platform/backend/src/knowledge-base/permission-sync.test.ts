@@ -20,7 +20,7 @@ import { and, desc, eq } from "drizzle-orm";
 import db, { schema } from "@/database";
 import { findGroupTokensForUserCached } from "@/knowledge-base/group-token-cache";
 import { permissionSyncService } from "@/knowledge-base/permission-sync";
-import { ConnectorRunModel } from "@/models";
+import { ConnectorRunModel, KbExternalUserGroupModel } from "@/models";
 import { beforeEach, describe, expect, test } from "@/test";
 
 type FakeDoc = {
@@ -592,6 +592,54 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
       .from(schema.kbExternalUserGroupTable)
       .where(eq(schema.kbExternalUserGroupTable.connectorId, connector.id));
     expect(rows.map((r) => r.groupId)).toEqual(["g1"]);
+  });
+
+  test("a persistence failure in the group step keeps stats honest: only landed batches counted, groupSyncFailed set", async ({
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const connector = await seedConnector(org.id);
+    const a = await seedDoc({
+      organizationId: org.id,
+      connectorId: connector.id,
+      sourceId: "a",
+      acl: [],
+    });
+    vi.mocked(getConnector).mockReturnValue(
+      makeFakeConnector({
+        documents: [
+          { sourceId: "a", permissions: { users: ["alice@example.com"] } },
+        ],
+        groups: [
+          {
+            groupId: "g1",
+            memberEmails: ["alice@example.com", "bob@example.com"],
+          },
+        ],
+      }),
+    );
+    // Enumeration succeeds but persistence fails (e.g. a schema mismatch):
+    // the pass once reported every enumerated membership as upserted anyway.
+    const upsertSpy = vi
+      .spyOn(KbExternalUserGroupModel, "upsertMany")
+      .mockRejectedValue(new Error("insert failed"));
+
+    const result = await permissionSyncService.executePass(connector.id);
+    upsertSpy.mockRestore();
+
+    // Failure-isolated: documents still reconcile.
+    expect(result.status).toBe("success");
+    expect(await docAcl(a.id)).toEqual(["user_email:alice@example.com"]);
+
+    const [run] = await db
+      .select({ stats: schema.connectorRunsTable.stats })
+      .from(schema.connectorRunsTable)
+      .where(eq(schema.connectorRunsTable.id, result.runId));
+    const stats = run?.stats as Record<string, unknown>;
+    expect(stats.groupSyncFailed).toBe(true);
+    expect(stats.groupsSynced).toBe(1);
+    // Nothing persisted, so nothing is counted as upserted.
+    expect(stats.membershipsUpserted).toBe(0);
   });
 
   test("fast-exits and records a permission run for a connector with no documents", async ({
