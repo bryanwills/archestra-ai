@@ -169483,6 +169483,11 @@
                                   "nullable": true,
                                   "description": "Null when the upstream hides the member's email \u2014 the member is fail-closed."
                                 },
+                                "accountType": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Upstream account classification (\"app\" = add-on/bot); null when the source has no notion of it."
+                                },
                                 "user": {
                                   "type": "object",
                                   "properties": {
@@ -169504,6 +169509,7 @@
                                 "accountId",
                                 "displayName",
                                 "email",
+                                "accountType",
                                 "user"
                               ]
                             }

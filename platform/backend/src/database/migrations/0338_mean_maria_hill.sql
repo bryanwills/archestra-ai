@@ -9,6 +9,7 @@ CREATE TABLE "kb_external_user_group" (
 	"external_account_id" text NOT NULL,
 	"display_name" text,
 	"member_email" text,
+	"account_type" text,
 	"stale" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL

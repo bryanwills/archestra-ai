@@ -974,8 +974,14 @@ describe("ConfluenceConnector permission sync", () => {
         accountId: "acc-alice",
         displayName: "Alice",
         email: "alice@example.com",
+        accountType: null,
       },
-      { accountId: "acc-bob", displayName: "Bob", email: null },
+      {
+        accountId: "acc-bob",
+        displayName: "Bob",
+        email: null,
+        accountType: null,
+      },
     ];
     expect(yields).toEqual([
       { groupId: "devs", members, cursor: "devs" },

@@ -297,6 +297,7 @@ class PermissionSyncService {
                 externalAccountId: member.accountId,
                 displayName: member.displayName,
                 memberEmail: member.email,
+                accountType: member.accountType ?? null,
               });
             }
             if (pending.length >= this.batchSize) {

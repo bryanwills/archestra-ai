@@ -416,6 +416,8 @@ export class ConfluenceConnector extends BaseConnector {
           accountId: String(accountId),
           displayName: member?.displayName ?? member?.publicName ?? null,
           email,
+          // Cloud reports "atlassian" | "app"; Server/DC omits it.
+          accountType: member?.accountType ?? null,
         };
         members.push(entry);
         allMembers.set(entry.accountId, entry);

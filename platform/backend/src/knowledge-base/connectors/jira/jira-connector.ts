@@ -841,6 +841,8 @@ export class JiraConnector extends BaseConnector {
           accountId: String(accountId),
           displayName: user?.displayName ?? null,
           email: user?.emailAddress ?? null,
+          // Cloud reports "atlassian" | "app" | "customer"; Server/DC omits it.
+          accountType: user?.accountType ?? null,
         });
       }
       startAt += users.length;

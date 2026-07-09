@@ -44054,6 +44054,10 @@ export type GetConnectorUserGroupsResponses = {
                  */
                 email: string | null;
                 /**
+                 * Upstream account classification ("app" = add-on/bot); null when the source has no notion of it.
+                 */
+                accountType: string | null;
+                /**
                  * Org user this email resolves to; null = grant currently resolves to nobody.
                  */
                 user: {

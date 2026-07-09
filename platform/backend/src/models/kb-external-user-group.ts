@@ -51,6 +51,7 @@ class KbExternalUserGroupModel {
           stale: false,
           memberEmail: sql`excluded.member_email`,
           displayName: sql`excluded.display_name`,
+          accountType: sql`excluded.account_type`,
           updatedAt: new Date(),
         },
       });
@@ -129,6 +130,7 @@ class KbExternalUserGroupModel {
       externalAccountId: string;
       displayName: string | null;
       memberEmail: string | null;
+      accountType: string | null;
       updatedAt: Date;
       user: { id: string; name: string } | null;
     }[]
@@ -140,6 +142,7 @@ class KbExternalUserGroupModel {
         externalAccountId: t.externalAccountId,
         displayName: t.displayName,
         memberEmail: t.memberEmail,
+        accountType: t.accountType,
         updatedAt: t.updatedAt,
         userId: schema.usersTable.id,
         userName: schema.usersTable.name,
@@ -165,6 +168,7 @@ class KbExternalUserGroupModel {
       externalAccountId: row.externalAccountId,
       displayName: row.displayName,
       memberEmail: row.memberEmail,
+      accountType: row.accountType,
       updatedAt: row.updatedAt,
       // A matching user account only counts if it is a member of this org.
       user:

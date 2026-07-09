@@ -51,6 +51,14 @@ const kbExternalUserGroupTable = pgTable(
     displayName: text("display_name"),
     /** NULL when the upstream hides the member's email (fail-closed). */
     memberEmail: text("member_email"),
+    /**
+     * Upstream account classification as the source reports it (Atlassian:
+     * "atlassian" | "app" | "customer"; NULL when the source has no notion of
+     * it). "app" rows are add-on/bot accounts: they never carry an email and
+     * never resolve to a user, so admin-facing resolution stats exclude them
+     * instead of reporting them as a credential problem.
+     */
+    accountType: text("account_type"),
     stale: boolean("stale").notNull().default(false),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" })

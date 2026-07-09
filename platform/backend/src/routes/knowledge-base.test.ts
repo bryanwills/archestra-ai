@@ -2415,16 +2415,24 @@ describe("knowledge base routes", () => {
           accountId: "alice",
           displayName: "Alice A",
           email: "alice@example.com",
+          accountType: null,
           user: { id: alice.id, name: alice.name },
         },
         {
           accountId: "bob",
           displayName: "Bob B",
           email: "bob@example.com",
+          accountType: null,
           user: null,
         },
         // Hidden email: recorded and visible to admins, resolves to nobody.
-        { accountId: "dave", displayName: "Dave D", email: null, user: null },
+        {
+          accountId: "dave",
+          displayName: "Dave D",
+          email: null,
+          accountType: null,
+          user: null,
+        },
       ]);
 
       // Granted on a document but absent from the snapshot: visible, no members.
@@ -2483,6 +2491,7 @@ describe("knowledge base routes", () => {
           accountId: "carol@example.com",
           displayName: null,
           email: "carol@example.com",
+          accountType: null,
           user: null,
         },
       ]);

@@ -680,6 +680,13 @@ export interface GroupMemberYield {
   accountId: string;
   displayName: string | null;
   email: string | null;
+  /**
+   * Upstream account classification as the source reports it (Atlassian:
+   * "atlassian" | "app" | "customer"). Null when the source has no notion of
+   * it. "app" members are add-on/bot accounts that never resolve to a user —
+   * admin stats separate them from genuinely unresolvable humans.
+   */
+  accountType?: string | null;
 }
 
 /**

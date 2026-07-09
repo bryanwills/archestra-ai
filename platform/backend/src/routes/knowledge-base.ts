@@ -1290,6 +1290,8 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
                     displayName: z.string().nullable(),
                     /** Null when the upstream hides the member's email — the member is fail-closed. */
                     email: z.string().nullable(),
+                    /** Upstream account classification ("app" = add-on/bot); null when the source has no notion of it. */
+                    accountType: z.string().nullable(),
                     /** Org user this email resolves to; null = grant currently resolves to nobody. */
                     user: z
                       .object({ id: z.string(), name: z.string() })
@@ -1335,6 +1337,7 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
             accountId: string;
             displayName: string | null;
             email: string | null;
+            accountType: string | null;
             user: { id: string; name: string } | null;
           }[];
         }
@@ -1360,6 +1363,7 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           accountId: membership.externalAccountId,
           displayName: membership.displayName,
           email: membership.memberEmail,
+          accountType: membership.accountType,
           user: membership.user,
         });
         const syncedAt = membership.updatedAt.toISOString();

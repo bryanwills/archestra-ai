@@ -7644,6 +7644,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "account_type": {
+          "name": "account_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "stale": {
           "name": "stale",
           "type": "boolean",

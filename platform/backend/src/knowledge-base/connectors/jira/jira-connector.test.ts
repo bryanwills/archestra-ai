@@ -1319,8 +1319,15 @@ describe("JiraConnector", () => {
               // Email hidden by Atlassian profile visibility — the member must
               // still be recorded (fail-closed), not silently dropped.
               { accountId: "acc-bob", displayName: "Bob" },
+              // Add-on/bot account — classification must travel with the
+              // member so admin stats can separate it from hidden humans.
+              {
+                accountId: "acc-bot",
+                displayName: "Automation for Jira",
+                accountType: "app",
+              },
             ],
-            total: 2,
+            total: 3,
           }),
         ),
       );
@@ -1337,8 +1344,20 @@ describe("JiraConnector", () => {
               accountId: "acc-alice",
               displayName: "Alice",
               email: "alice@example.com",
+              accountType: null,
             },
-            { accountId: "acc-bob", displayName: "Bob", email: null },
+            {
+              accountId: "acc-bob",
+              displayName: "Bob",
+              email: null,
+              accountType: null,
+            },
+            {
+              accountId: "acc-bot",
+              displayName: "Automation for Jira",
+              email: null,
+              accountType: "app",
+            },
           ],
           cursor: "devs",
         },
@@ -1424,6 +1443,7 @@ describe("JiraConnector", () => {
               accountId: "alice@example.com",
               displayName: null,
               email: "alice@example.com",
+              accountType: null,
             },
           ],
           cursor: "devs",
