@@ -287,7 +287,9 @@ function StatBlock({
 }) {
   return (
     <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+      {/* Same label treatment as the page-header MetadataItem block, so the
+          label reads as a label and doesn't blend into the detail line. */}
+      <div className="text-sm text-muted-foreground">{label}</div>
       <div className={`text-lg font-semibold ${warn ? "text-amber-600" : ""}`}>
         {value}
       </div>
