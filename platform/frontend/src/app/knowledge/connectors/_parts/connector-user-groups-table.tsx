@@ -65,7 +65,7 @@ export function ConnectorUserGroupsTable({
             <div className="flex flex-wrap items-center gap-1">
               {row.original.members.map((member) => (
                 <Badge
-                  key={member.email}
+                  key={member.accountId}
                   variant={member.user ? "secondary" : "outline"}
                   className={
                     member.user
@@ -75,11 +75,14 @@ export function ConnectorUserGroupsTable({
                   title={
                     member.user
                       ? `Resolves to ${member.user.name}`
-                      : "No Archestra user with this email — this grant currently resolves to nobody"
+                      : member.email
+                        ? "No Archestra user with this email — this grant currently resolves to nobody"
+                        : "The source system hides this member's email, so they cannot be matched to a user — their access through this group stays fail-closed"
                   }
                 >
                   <span className="truncate">
-                    {member.email}
+                    {member.email ??
+                      `${member.displayName ?? member.accountId} · email hidden`}
                     {member.user ? ` · ${member.user.name}` : ""}
                   </span>
                 </Badge>
