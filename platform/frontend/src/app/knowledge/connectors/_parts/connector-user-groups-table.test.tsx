@@ -8,6 +8,18 @@ vi.mock("@/lib/knowledge/connector.query", () => ({
   useConnectorUserGroups: (args: unknown) => mockUseConnectorUserGroups(args),
 }));
 
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+}));
+
 describe("ConnectorUserGroupsTable", () => {
   it("shows each group's members with their resolved org users", () => {
     mockUseConnectorUserGroups.mockReturnValue({
@@ -61,10 +73,42 @@ describe("ConnectorUserGroupsTable", () => {
     // Resolved member shows the org user it maps to; unresolved shows email only.
     expect(screen.getByText("alice@example.com · Alice")).toBeInTheDocument();
     expect(screen.getByText("bob@example.com")).toBeInTheDocument();
-    // A hidden-email member is still listed, flagged instead of dropped.
+    // Past the 2 visible badges, members collapse behind +N more — the
+    // hidden-email member is still listed (in the tooltip), not dropped.
+    expect(screen.getByText("+1 more")).toBeInTheDocument();
     expect(screen.getByText("Dave D · email hidden")).toBeInTheDocument();
     // A group granted on documents but with no snapshot members is called out.
     expect(screen.getByText(/No resolvable members/)).toBeInTheDocument();
+  });
+
+  it("collapses very large groups into +N more with every member in the tooltip", () => {
+    mockUseConnectorUserGroups.mockReturnValue({
+      data: {
+        groups: [
+          {
+            groupId: "everyone",
+            token: "group:jira_everyone",
+            documentCount: 1,
+            lastSyncedAt: "2026-07-08T15:00:00.000Z",
+            members: Array.from({ length: 500 }, (_, i) => ({
+              accountId: `acc-${i}`,
+              displayName: `User ${i}`,
+              email: `user${i}@example.com`,
+              user: null,
+            })),
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    render(<ConnectorUserGroupsTable connectorId="connector-1" />);
+
+    expect(screen.getByText("+498 more")).toBeInTheDocument();
+    // The (scrollable) tooltip lists ALL collapsed members.
+    expect(screen.getByText("user2@example.com")).toBeInTheDocument();
+    expect(screen.getByText("user499@example.com")).toBeInTheDocument();
   });
 
   it("explains the email-based mapping and shows an empty state before the first sync", () => {
