@@ -2,6 +2,7 @@
 
 import {
   type archestraApiTypes,
+  DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS,
   getConnectorNamePlaceholder,
 } from "@archestra/shared";
 import { ArrowLeft, ChevronDown } from "lucide-react";
@@ -53,6 +54,7 @@ import {
   getDefaultConnectorConfig,
 } from "./connector-dialog-config";
 import { ConnectorTypeIcon } from "./connector-icons";
+import { PermissionSyncIntervalPicker } from "./permission-sync-interval-picker";
 import { SchedulePicker } from "./schedule-picker";
 import { transformConfigArrayFields } from "./transform-config-array-fields";
 
@@ -64,6 +66,7 @@ type CreateConnectorFormValues = {
   email: string;
   apiToken: string;
   schedule: string;
+  permissionSyncIntervalSeconds: number;
   environmentId: string | null;
 };
 
@@ -103,6 +106,7 @@ export function CreateConnectorDialog({
       email: "",
       apiToken: "",
       schedule: "0 */6 * * *",
+      permissionSyncIntervalSeconds: DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS,
       environmentId: null,
     },
   });
@@ -159,6 +163,9 @@ export function CreateConnectorDialog({
             },
           }),
       schedule: values.schedule,
+      ...(visibility === "auto-sync-permissions" && {
+        permissionSyncIntervalSeconds: values.permissionSyncIntervalSeconds,
+      }),
       ...(knowledgeBaseId && { knowledgeBaseIds: [knowledgeBaseId] }),
     });
     if (result) {
@@ -378,6 +385,13 @@ export function CreateConnectorDialog({
                   showTeamRequired
                   supportsAutoSync={connectorSupportsAutoSync(connectorType)}
                 />
+
+                {visibility === "auto-sync-permissions" && (
+                  <PermissionSyncIntervalPicker
+                    form={form}
+                    name="permissionSyncIntervalSeconds"
+                  />
+                )}
 
                 <div className="border-t" />
 

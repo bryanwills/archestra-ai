@@ -41,6 +41,7 @@ import {
   getConnectorUrlConfig,
 } from "./connector-dialog-config";
 import { ConnectorTypeIcon } from "./connector-icons";
+import { PermissionSyncIntervalPicker } from "./permission-sync-interval-picker";
 import { SchedulePicker } from "./schedule-picker";
 import { transformConfigArrayFields } from "./transform-config-array-fields";
 
@@ -54,6 +55,7 @@ type ConnectorItem = Pick<
   | "connectorType"
   | "config"
   | "schedule"
+  | "permissionSyncIntervalSeconds"
   | "enabled"
   | "environmentId"
 >;
@@ -66,6 +68,7 @@ type EditConnectorFormValues = {
   email: string;
   apiToken: string;
   schedule: string;
+  permissionSyncIntervalSeconds: number;
   environmentId: string | null;
 };
 
@@ -91,6 +94,7 @@ export function EditConnectorDialog({
       email: "",
       apiToken: "",
       schedule: connector.schedule,
+      permissionSyncIntervalSeconds: connector.permissionSyncIntervalSeconds,
       environmentId: connector.environmentId ?? null,
     },
   });
@@ -107,6 +111,7 @@ export function EditConnectorDialog({
         email: "",
         apiToken: "",
         schedule: connector.schedule,
+        permissionSyncIntervalSeconds: connector.permissionSyncIntervalSeconds,
         environmentId: connector.environmentId ?? null,
       });
     }
@@ -152,6 +157,9 @@ export function EditConnectorDialog({
         ) as archestraApiTypes.CreateConnectorData["body"]["config"],
         environmentId: values.environmentId,
         schedule: values.schedule,
+        ...(visibility === "auto-sync-permissions" && {
+          permissionSyncIntervalSeconds: values.permissionSyncIntervalSeconds,
+        }),
         ...(hasCredentials && {
           credentials: {
             ...(values.email && { email: values.email }),
@@ -291,6 +299,13 @@ export function EditConnectorDialog({
             showTeamRequired
             supportsAutoSync={connectorSupportsAutoSync(connectorType)}
           />
+
+          {visibility === "auto-sync-permissions" && (
+            <PermissionSyncIntervalPicker
+              form={form}
+              name="permissionSyncIntervalSeconds"
+            />
+          )}
 
           <div className="border-t" />
 

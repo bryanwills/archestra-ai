@@ -40,14 +40,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CronExpressionPicker } from "@/components/ui/cron-expression-picker";
 import {
   DialogBody,
   DialogForm,
   DialogStickyFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { useEnterpriseFeature, useFeature } from "@/lib/config/config.query";
+import { useFeature } from "@/lib/config/config.query";
 import {
   useEmbeddingModels,
   useLlmModels,
@@ -465,11 +464,6 @@ function KnowledgeSettingsContent() {
     string | null
   >(null);
   const [rerankerModel, setRerankerModel] = useState<string | null>(null);
-  // null = use the ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE env default.
-  const [permissionSyncSchedule, setPermissionSyncSchedule] = useState<
-    string | null
-  >(null);
-  const knowledgeBaseEnterprise = useEnterpriseFeature("knowledgeBase");
 
   const { data: embeddingModels } = useEmbeddingModels(embeddingChatApiKeyId);
   const {
@@ -515,7 +509,6 @@ function KnowledgeSettingsContent() {
       setEmbeddingChatApiKeyId(organization.embeddingChatApiKeyId ?? null);
       setRerankerChatApiKeyId(organization.rerankerChatApiKeyId ?? null);
       setRerankerModel(organization.rerankerModel ?? null);
-      setPermissionSyncSchedule(organization.permissionSyncSchedule ?? null);
     }
   }, [organization]);
 
@@ -525,15 +518,12 @@ function KnowledgeSettingsContent() {
     : null;
   const serverRerankerKeyId = organization?.rerankerChatApiKeyId ?? null;
   const serverRerankerModel = organization?.rerankerModel ?? null;
-  const serverPermissionSyncSchedule =
-    organization?.permissionSyncSchedule ?? null;
 
   const hasChanges =
     embeddingModel !== serverEmbeddingModel ||
     embeddingChatApiKeyId !== serverEmbeddingKeyId ||
     rerankerChatApiKeyId !== serverRerankerKeyId ||
-    rerankerModel !== serverRerankerModel ||
-    permissionSyncSchedule !== serverPermissionSyncSchedule;
+    rerankerModel !== serverRerankerModel;
 
   // Embedding model is locked once both key and model have been saved
   const isEmbeddingModelLocked =
@@ -564,7 +554,6 @@ function KnowledgeSettingsContent() {
       embeddingChatApiKeyId: embeddingChatApiKeyId ?? null,
       rerankerChatApiKeyId: rerankerChatApiKeyId ?? null,
       rerankerModel: rerankerModel ?? null,
-      permissionSyncSchedule: permissionSyncSchedule ?? null,
     });
   };
 
@@ -573,7 +562,6 @@ function KnowledgeSettingsContent() {
     setEmbeddingChatApiKeyId(serverEmbeddingKeyId);
     setRerankerChatApiKeyId(serverRerankerKeyId);
     setRerankerModel(serverRerankerModel);
-    setPermissionSyncSchedule(serverPermissionSyncSchedule);
   };
 
   // Clear reranker model when switching provider keys
@@ -816,58 +804,6 @@ function KnowledgeSettingsContent() {
             </WithPermissions>
           </CardContent>
         </Card>
-
-        {/* SPDX-SnippetBegin */}
-        {/* SPDX-SnippetCopyrightText: 2026 Archestra Inc. */}
-        {/* SPDX-License-Identifier: LicenseRef-Archestra-Enterprise */}
-        {knowledgeBaseEnterprise && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Permission Sync Schedule</CardTitle>
-              <CardDescription className="leading-relaxed">
-                How often the permission-sync pass re-derives per-document
-                access for connectors using{" "}
-                <strong>Auto-sync permissions</strong>. New or changed upstream
-                access is not visible until the next run, so keep this
-                reasonably frequent. Applies to all auto-sync connectors.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <WithPermissions
-                permissions={{ knowledgeSettings: ["update"] }}
-                noPermissionHandle="tooltip"
-              >
-                {({ hasPermission }) => (
-                  <div className="flex flex-col gap-3">
-                    <CronExpressionPicker
-                      value={permissionSyncSchedule ?? ""}
-                      onChange={(value) =>
-                        hasPermission &&
-                        setPermissionSyncSchedule(
-                          value.trim() === "" ? null : value,
-                        )
-                      }
-                      selectPlaceholder="Use the deployment default"
-                    />
-                    {permissionSyncSchedule !== null && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        disabled={!hasPermission}
-                        onClick={() => setPermissionSyncSchedule(null)}
-                      >
-                        Reset to deployment default
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </WithPermissions>
-            </CardContent>
-          </Card>
-        )}
-        {/* SPDX-SnippetEnd */}
 
         <SettingsSaveBar
           hasChanges={hasChanges}
