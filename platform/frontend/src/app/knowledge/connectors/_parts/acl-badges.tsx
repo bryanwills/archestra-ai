@@ -11,11 +11,11 @@ import { useTeams } from "@/lib/teams/team.query";
 const MAX_VISIBLE_ENTRIES = 3;
 
 /**
- * Human-readable rendering of a document's ACL, styled after the Models
- * column on the LLM limits table: a single line of outline badges, with
- * everything past the first few collapsed into a "+N more" badge whose
- * tooltip lists all collapsed entries (scrollable — an auto-sync ACL can
- * carry hundreds). Every entry kind the backend writes is covered: `org:*`,
+ * Human-readable rendering of a document's ACL, replicating the Models
+ * column on the LLM limits table: up to three full-width outline badges,
+ * with everything past that collapsed into a "+N more" badge whose tooltip
+ * lists all collapsed entries (scrollable — an auto-sync ACL can carry
+ * hundreds). Every entry kind the backend writes is covered: `org:*`,
  * `team:<id>` (resolved to the team name), `user_email:<email>`,
  * `group:<connectorType>_<groupId>`, and the empty ACL (fail-closed — nobody
  * can retrieve the document until a permission sync tags it). Raw tokens stay
@@ -51,24 +51,16 @@ export function AclBadges({ acl }: { acl: string[] }) {
   const hidden = entries.slice(MAX_VISIBLE_ENTRIES);
 
   return (
-    <div className="flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden">
+    <div className="flex flex-wrap gap-1">
       {visible.map(({ entry, label }) => (
-        <Badge
-          key={entry}
-          variant="outline"
-          className="min-w-0 shrink text-xs font-normal"
-          title={entry}
-        >
-          <span className="truncate">{label}</span>
+        <Badge key={entry} variant="outline" className="text-xs" title={entry}>
+          {label}
         </Badge>
       ))}
       {hidden.length > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge
-              variant="outline"
-              className="shrink-0 cursor-default text-xs font-normal"
-            >
+            <Badge variant="outline" className="cursor-default text-xs">
               +{hidden.length} more
             </Badge>
           </TooltipTrigger>
