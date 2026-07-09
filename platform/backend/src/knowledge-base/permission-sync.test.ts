@@ -14,9 +14,11 @@ vi.mock("@/knowledge-base/connectors/registry", () => ({ getConnector }));
 vi.mock("@/knowledge-base/connector-credentials", () => ({
   resolveConnectorCredentials: vi.fn().mockResolvedValue({}),
 }));
+vi.mock("@/cache-manager");
 
 import { and, desc, eq } from "drizzle-orm";
 import db, { schema } from "@/database";
+import { findGroupTokensForUserCached } from "@/knowledge-base/group-token-cache";
 import { permissionSyncService } from "@/knowledge-base/permission-sync";
 import { ConnectorRunModel } from "@/models";
 import { beforeEach, describe, expect, test } from "@/test";
@@ -506,6 +508,37 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
       .where(eq(schema.kbExternalUserGroupTable.connectorId, connector.id));
     // g1 survives (re-observed); the revoked "gone" group is swept.
     expect(rows.map((r) => r.groupId).sort()).toEqual(["g1"]);
+  });
+
+  test("a finished pass invalidates the per-user group-token cache", async ({
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const connector = await seedConnector(org.id);
+    // Warm the cache with the pre-pass answer: alice has no groups.
+    expect(
+      await findGroupTokensForUserCached({
+        memberEmail: "alice@example.com",
+        connectorIds: [connector.id],
+      }),
+    ).toEqual([]);
+
+    // The pass grants alice g1 (no documents → phase 2 fast-exits).
+    vi.mocked(getConnector).mockReturnValue(
+      makeFakeConnector({
+        groups: [{ groupId: "g1", memberEmails: ["alice@example.com"] }],
+      }),
+    );
+    const result = await permissionSyncService.executePass(connector.id);
+    expect(result.status).toBe("success");
+
+    // The stale cached EMPTY answer was dropped by the finished pass.
+    expect(
+      await findGroupTokensForUserCached({
+        memberEmail: "alice@example.com",
+        connectorIds: [connector.id],
+      }),
+    ).toEqual(["group:github_g1"]);
   });
 
   test("groups step failure is isolated: the document reconcile still runs and the prior snapshot survives", async ({

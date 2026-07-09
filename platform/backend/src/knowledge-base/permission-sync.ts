@@ -25,6 +25,7 @@ import {
   extractErrorMessage,
 } from "./connectors/base-connector";
 import { getConnector } from "./connectors/registry";
+import { invalidateGroupTokenCache } from "./group-token-cache";
 import { buildDocumentAccessControlList } from "./source-access-control";
 
 const WORKER_ID = `${hostname()}#${process.pid}`;
@@ -158,7 +159,7 @@ class PermissionSyncService {
     heartbeat.unref();
 
     try {
-      return await this.runClaimedPass({
+      const result = await this.runClaimedPass({
         connector,
         connectorImpl,
         runId: run.id,
@@ -168,6 +169,13 @@ class PermissionSyncService {
         runLog,
         getLogOutput: options?.getLogOutput,
       });
+      // This pass is the only writer of group memberships, so drop the
+      // per-user group-token cache whenever one finishes — including a
+      // `partial` run, whose group phase may have completed before the
+      // interruption. Freshly synced access is then visible on the next
+      // query instead of after the cache TTL.
+      await invalidateGroupTokenCache();
+      return result;
     } finally {
       clearInterval(heartbeat);
     }

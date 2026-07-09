@@ -21,6 +21,7 @@ import { z } from "zod";
 import {
   buildUserAccessControlList,
   didKnowledgeSourceAclInputsChange,
+  findGroupTokensForUserCached,
   isTeamScopedWithoutTeams,
   knowledgeSourceAccessControlService,
   queryService,
@@ -30,7 +31,6 @@ import {
   AgentConnectorAssignmentModel,
   AgentKnowledgeBaseModel,
   AgentModel,
-  KbExternalUserGroupModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
   UserModel,
@@ -610,12 +610,12 @@ async function handleQueryKnowledgeSources(params: {
         // Resolve the user's upstream group memberships for any in-scope
         // auto-sync-permissions connector (local SQL, no upstream call). Rows
         // only exist for auto-sync connectors, so this is a no-op for the
-        // org-wide / team-scoped case.
-        const groupTokens =
-          await KbExternalUserGroupModel.findGroupTokensForUser({
-            memberEmail: user.email,
-            connectorIds,
-          });
+        // org-wide / team-scoped case. Cached per (user, connector set);
+        // any finished permission sync invalidates.
+        const groupTokens = await findGroupTokensForUserCached({
+          memberEmail: user.email,
+          connectorIds,
+        });
         userAcl = buildUserAccessControlList({
           userEmail: user.email,
           teamIds: access?.teamIds ?? [],
