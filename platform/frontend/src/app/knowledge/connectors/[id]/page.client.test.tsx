@@ -116,7 +116,7 @@ beforeEach(() => {
 
 describe("ConnectorDetailPage", () => {
   describe("Permission Sync Runs tab visibility", () => {
-    it("shows the Permission Sync Runs tab for auto-sync-permissions connectors", () => {
+    it("shows one merged Sync Runs tab with a run-family filter for auto-sync connectors", () => {
       mockUseConnector.mockReturnValue({
         data: makeConnector({ visibility: "auto-sync-permissions" }),
         isPending: false,
@@ -126,21 +126,22 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
+      // No separate permission-runs tab: one Sync Runs tab covers both
+      // families, narrowed by the in-tab filter.
+      expect(
+        screen.queryByRole("link", { name: "Permission Sync Runs" }),
+      ).not.toBeInTheDocument();
       // PageLayout renders the tab list twice (desktop + mobile), so each label
       // appears more than once; assert on the first match.
-      const permissionTabs = screen.getAllByRole("link", {
-        name: "Permission Sync Runs",
-      });
-      expect(permissionTabs.length).toBeGreaterThan(0);
-      expect(permissionTabs[0]).toHaveAttribute(
-        "href",
-        `/knowledge/connectors/${CONNECTOR_ID}?tab=permission-runs`,
-      );
-      // The base "Sync Runs" content tab is always present.
       expect(
         screen.getAllByRole("link", { name: "Sync Runs" }).length,
       ).toBeGreaterThan(0);
-      // Group visibility is also auto-sync-only.
+      expect(screen.getByRole("tab", { name: "All runs" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Content" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: "Permissions" }),
+      ).toBeInTheDocument();
+      // Group visibility is auto-sync-only.
       const userGroupTabs = screen.getAllByRole("link", {
         name: "User Groups",
       });
@@ -295,7 +296,7 @@ describe("ConnectorDetailPage", () => {
       expect(screen.queryByText("ingesting documents")).not.toBeInTheDocument();
     });
 
-    it("shows permission-run stats columns and the during-content-sync badge on the permission tab", () => {
+    it("summarizes permission-run stats and the during-content-sync badge via the legacy permission-runs link", () => {
       mockUseConnector.mockReturnValue({
         data: makeConnector({ visibility: "auto-sync-permissions" }),
         isPending: false,
@@ -334,13 +335,15 @@ describe("ConnectorDetailPage", () => {
 
       render(<ConnectorDetailPage connectorId={CONNECTOR_ID} />);
 
-      // Family-relevant columns instead of Processed/Ingested.
-      expect(screen.getByText("Docs scanned")).toBeInTheDocument();
-      expect(screen.getByText("ACLs changed")).toBeInTheDocument();
-      expect(screen.getByText("Fail-closed")).toBeInTheDocument();
-      expect(screen.queryByText("Processed")).not.toBeInTheDocument();
-      expect(screen.queryByText("Ingested")).not.toBeInTheDocument();
-      expect(screen.getByText("13,831")).toBeInTheDocument();
+      // The legacy permission-runs deep link preselects the family filter.
+      expect(screen.getByRole("tab", { name: "Permissions" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      // Family-aware Results summary instead of dedicated permission columns.
+      expect(screen.getByText(/13,831 ACLs changed/)).toBeInTheDocument();
+      expect(screen.getByText(/3 fail-closed/)).toBeInTheDocument();
+      expect(screen.getByText(/6 groups/)).toBeInTheDocument();
       // The legibility badge: this success ran during a content backfill.
       expect(screen.getByText("during content sync")).toBeInTheDocument();
     });

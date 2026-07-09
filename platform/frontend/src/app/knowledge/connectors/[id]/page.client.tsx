@@ -61,6 +61,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -139,14 +140,14 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       ? "Back to Knowledge Bases"
       : "Back to Connectors";
   const tabParam = searchParams.get("tab");
+  // "permission-runs" is a legacy deep link from when permission runs had
+  // their own tab; it lands on the merged Sync Runs tab pre-filtered.
   const currentTab =
     tabParam === "documents"
       ? "documents"
-      : tabParam === "permission-runs"
-        ? "permission-runs"
-        : tabParam === "user-groups"
-          ? "user-groups"
-          : "runs";
+      : tabParam === "user-groups"
+        ? "user-groups"
+        : "runs";
 
   const {
     data: connector,
@@ -155,20 +156,12 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     refetch,
   } = useConnector(connectorId);
 
-  // The "Permission Sync Runs" tab exists only for auto-sync-permissions
-  // connectors; content and permission runs are shown in separate tabs, each
-  // filtered by runType.
+  // Content and permission runs share the one Sync Runs tab (a Type column
+  // tells them apart, a filter narrows to one family); permission-only views
+  // live behind the in-tab filter rather than a separate tab.
   const isAutoSync = connector?.visibility === "auto-sync-permissions";
   const tabs = [
     { label: "Sync Runs", href: `/knowledge/connectors/${connectorId}` },
-    ...(isAutoSync
-      ? [
-          {
-            label: "Permission Sync Runs",
-            href: `/knowledge/connectors/${connectorId}?tab=permission-runs`,
-          },
-        ]
-      : []),
     {
       label: "Documents",
       href: `/knowledge/connectors/${connectorId}?tab=documents`,
@@ -191,12 +184,21 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [runTypeFilter, setRunTypeFilter] = useState<
+    "all" | "content" | "permission"
+  >(tabParam === "permission-runs" ? "permission" : "all");
 
   const { data: runsData, isPending: isRunsPending } = useConnectorRuns({
     connectorId,
     limit: pageSize,
     offset: pageIndex * pageSize,
-    runType: currentTab === "permission-runs" ? "permission" : "content",
+    // Non-auto-sync connectors only ever have content runs; auto-sync ones
+    // default to the interleaved view and can narrow to one family.
+    runType: !isAutoSync
+      ? "content"
+      : runTypeFilter === "all"
+        ? undefined
+        : runTypeFilter,
   });
 
   const handleSync = useCallback(async () => {
@@ -215,6 +217,10 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
     [],
   );
 
+  // One table for both run families. Shared lifecycle columns (Status,
+  // Started, Completed) line up across rows; the family-specific counters
+  // collapse into a compact Results summary (the details dialog has the full
+  // numbers), and a Type badge tells the families apart when interleaved.
   const columns: ColumnDef<ConnectorRunItem>[] = [
     {
       id: "status",
@@ -222,6 +228,27 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       header: "Status",
       cell: ({ row }) => {
         const run = row.original;
+        if (run.runType === "permission") {
+          return (
+            <div className="space-y-1">
+              <ConnectorStatusBadge status={run.status} />
+              {run.stats?.contentSyncActiveDuringRun && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="text-xs font-normal">
+                      during content sync
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    A content sync was still ingesting when this pass ran.
+                    Documents ingested after it started stay access-restricted
+                    until the next pass.
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          );
+        }
         const phase = contentRunPhase(run);
         if (!phase) return <ConnectorStatusBadge status={run.status} />;
         return (
@@ -239,6 +266,21 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         );
       },
     },
+    ...(isAutoSync
+      ? [
+          {
+            id: "runType",
+            header: "Type",
+            cell: ({ row }) => (
+              <Badge variant="outline" className="text-xs font-normal">
+                {row.original.runType === "permission"
+                  ? "Permissions"
+                  : "Content"}
+              </Badge>
+            ),
+          } satisfies ColumnDef<ConnectorRunItem>,
+        ]
+      : []),
     {
       id: "startedAt",
       accessorKey: "startedAt",
@@ -261,25 +303,9 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
       ),
     },
     {
-      id: "documentsProcessed",
-      header: "Processed",
-      cell: ({ row }) => {
-        const processed = row.original.documentsProcessed ?? 0;
-        const total = row.original.totalItems;
-        return (
-          <div>
-            {processed}
-            {total != null && total > 0 && (
-              <span className="text-muted-foreground"> / {total}</span>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      id: "documentsIngested",
-      header: "Ingested",
-      cell: ({ row }) => <div>{row.original.documentsIngested ?? 0}</div>,
+      id: "results",
+      header: "Results",
+      cell: ({ row }) => <RunResultsSummary run={row.original} />,
     },
     {
       id: "logs",
@@ -303,109 +329,6 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         );
       },
     },
-  ];
-
-  // Permission runs get family-relevant columns: the content counters
-  // (Processed/Ingested) are always 0 for them; what matters is how much of
-  // the corpus was scanned, what changed, and what fail-closed.
-  const permissionColumns: ColumnDef<ConnectorRunItem>[] = [
-    {
-      id: "status",
-      accessorKey: "status",
-      header: "Status",
-      cell: ({ row }) => {
-        const run = row.original;
-        return (
-          <div className="space-y-1">
-            <ConnectorStatusBadge status={run.status} />
-            {run.stats?.contentSyncActiveDuringRun && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Badge variant="outline" className="text-xs font-normal">
-                    during content sync
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  A content sync was still ingesting when this pass ran.
-                  Documents ingested after it started stay access-restricted
-                  until the next pass.
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      id: "startedAt",
-      accessorKey: "startedAt",
-      header: "Started",
-      cell: ({ row }) => (
-        <div className="font-mono text-xs">
-          {formatDate({ date: row.original.startedAt })}
-        </div>
-      ),
-    },
-    {
-      id: "completedAt",
-      header: "Completed",
-      cell: ({ row }) => (
-        <div className="font-mono text-xs">
-          {row.original.completedAt
-            ? formatDate({ date: row.original.completedAt })
-            : "-"}
-        </div>
-      ),
-    },
-    {
-      id: "docsScanned",
-      header: "Docs scanned",
-      cell: ({ row }) => {
-        const stats = row.original.stats;
-        if (!stats) return <div className="text-muted-foreground">-</div>;
-        return (
-          <div>
-            {stats.docsScanned.toLocaleString()}
-            {stats.totalDocs > 0 && (
-              <span className="text-muted-foreground">
-                {" "}
-                / {stats.totalDocs.toLocaleString()}
-              </span>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      id: "aclsChanged",
-      header: "ACLs changed",
-      cell: ({ row }) => (
-        <div>{row.original.stats?.aclsChanged.toLocaleString() ?? "-"}</div>
-      ),
-    },
-    {
-      id: "failClosed",
-      header: "Fail-closed",
-      cell: ({ row }) => {
-        const failClosed = row.original.stats?.failClosed;
-        if (failClosed == null)
-          return <div className="text-muted-foreground">-</div>;
-        return (
-          <div className={failClosed > 0 ? "text-amber-600" : undefined}>
-            {failClosed.toLocaleString()}
-          </div>
-        );
-      },
-    },
-    {
-      id: "groupsSynced",
-      header: "Groups",
-      cell: ({ row }) => (
-        <div>{row.original.stats?.groupsSynced.toLocaleString() ?? "-"}</div>
-      ),
-    },
-    // Reuse the content table's logs column (same details dialog).
-    columns[columns.length - 1],
   ];
 
   if (isPending) {
@@ -579,39 +502,56 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
           </div>
         </div>
 
-        {isAutoSync && <PermissionCoverageBanner connectorId={connectorId} />}
+        {isAutoSync && currentTab === "runs" && (
+          <PermissionCoverageBanner connectorId={connectorId} />
+        )}
 
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
         ) : currentTab === "user-groups" ? (
           <ConnectorUserGroupsTable connectorId={connectorId} />
         ) : (
-          <LoadingWrapper
-            isPending={isRunsPending}
-            loadingFallback={<LoadingSpinner />}
-          >
-            {(runsData?.data ?? []).length === 0 ? (
-              <div className="text-muted-foreground">
-                {currentTab === "permission-runs"
-                  ? "No permission sync runs yet. Permission sync runs on a schedule; the first run tags this connector's documents with their upstream access."
-                  : "No sync runs yet. Trigger a manual sync or wait for the scheduled sync."}
-              </div>
-            ) : (
-              <DataTable
-                columns={
-                  currentTab === "permission-runs" ? permissionColumns : columns
-                }
-                data={runsData?.data ?? []}
-                manualPagination={true}
-                pagination={{
-                  pageIndex,
-                  pageSize,
-                  total: runsData?.pagination?.total ?? 0,
+          <div className="space-y-4">
+            {isAutoSync && (
+              <Tabs
+                value={runTypeFilter}
+                onValueChange={(value) => {
+                  setRunTypeFilter(value as typeof runTypeFilter);
+                  setPageIndex(0);
                 }}
-                onPaginationChange={handlePaginationChange}
-              />
+              >
+                <TabsList>
+                  <TabsTrigger value="all">All runs</TabsTrigger>
+                  <TabsTrigger value="content">Content</TabsTrigger>
+                  <TabsTrigger value="permission">Permissions</TabsTrigger>
+                </TabsList>
+              </Tabs>
             )}
-          </LoadingWrapper>
+            <LoadingWrapper
+              isPending={isRunsPending}
+              loadingFallback={<LoadingSpinner />}
+            >
+              {(runsData?.data ?? []).length === 0 ? (
+                <div className="text-muted-foreground">
+                  {runTypeFilter === "permission"
+                    ? "No permission sync runs yet. The first run tags this connector's documents with their upstream access."
+                    : "No sync runs yet. Trigger a manual sync or wait for the scheduled sync."}
+                </div>
+              ) : (
+                <DataTable
+                  columns={columns}
+                  data={runsData?.data ?? []}
+                  manualPagination={true}
+                  pagination={{
+                    pageIndex,
+                    pageSize,
+                    total: runsData?.pagination?.total ?? 0,
+                  }}
+                  onPaginationChange={handlePaginationChange}
+                />
+              )}
+            </LoadingWrapper>
+          </div>
         )}
 
         <ConnectorRunDetailsDialog
@@ -627,6 +567,56 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         />
       </div>
     </PageLayout>
+  );
+}
+
+/**
+ * Compact family-aware run outcome for the merged Sync Runs table: content
+ * runs summarize ingest counters, permission runs summarize the reconcile
+ * (scanned / changed / fail-closed / groups). Full numbers live in the run
+ * details dialog.
+ */
+function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
+  if (run.runType === "permission") {
+    const stats = run.stats;
+    if (!stats) return <div className="text-muted-foreground">-</div>;
+    return (
+      <div className="text-sm whitespace-nowrap">
+        {stats.docsScanned.toLocaleString()}
+        {stats.totalDocs > 0 && (
+          <span className="text-muted-foreground">
+            {" "}
+            / {stats.totalDocs.toLocaleString()}
+          </span>
+        )}{" "}
+        scanned
+        <span className="text-muted-foreground"> · </span>
+        {stats.aclsChanged.toLocaleString()} ACLs changed
+        <span className="text-muted-foreground"> · </span>
+        <span className={stats.failClosed > 0 ? "text-amber-600" : undefined}>
+          {stats.failClosed.toLocaleString()} fail-closed
+        </span>
+        <span className="text-muted-foreground"> · </span>
+        {stats.groupsSynced.toLocaleString()} groups
+      </div>
+    );
+  }
+
+  const processed = run.documentsProcessed ?? 0;
+  const total = run.totalItems;
+  return (
+    <div className="text-sm whitespace-nowrap">
+      {processed.toLocaleString()}
+      {total != null && total > 0 && (
+        <span className="text-muted-foreground">
+          {" "}
+          / {total.toLocaleString()}
+        </span>
+      )}{" "}
+      processed
+      <span className="text-muted-foreground"> · </span>
+      {(run.documentsIngested ?? 0).toLocaleString()} ingested
+    </div>
   );
 }
 
