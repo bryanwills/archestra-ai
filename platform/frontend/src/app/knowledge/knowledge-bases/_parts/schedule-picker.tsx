@@ -33,7 +33,7 @@ export function SchedulePicker({
       rules={{ required: "Schedule is required" }}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>Content Sync Schedule</FormLabel>
+          <FormLabel>Documents Sync Schedule</FormLabel>
           <FormControl>
             <div className="space-y-2">
               <CronExpressionPicker
@@ -46,7 +46,7 @@ export function SchedulePicker({
             </div>
           </FormControl>
           <FormDescription>
-            Pick how often to sync content with your {connectorTypeLabel}{" "}
+            Pick how often to sync documents with your {connectorTypeLabel}{" "}
             instance
           </FormDescription>
           <FormMessage />

@@ -139,7 +139,9 @@ describe("ConnectorDetailPage", () => {
         screen.getAllByRole("link", { name: "Sync Runs" }).length,
       ).toBeGreaterThan(0);
       expect(screen.getByRole("tab", { name: "All runs" })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: "Content" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: "Documents" }),
+      ).toBeInTheDocument();
       expect(
         screen.getByRole("tab", { name: "Permissions" }),
       ).toBeInTheDocument();
@@ -348,7 +350,7 @@ describe("ConnectorDetailPage", () => {
       expect(screen.getByText(/3 fail-closed/)).toBeInTheDocument();
       expect(screen.getByText(/6 groups/)).toBeInTheDocument();
       // The legibility badge: this success ran during a content backfill.
-      expect(screen.getByText("during content sync")).toBeInTheDocument();
+      expect(screen.getByText("during documents sync")).toBeInTheDocument();
     });
 
     it("shows awaiting-sync coverage in the metadata block and triggers a manual sync from the actions menu", async () => {

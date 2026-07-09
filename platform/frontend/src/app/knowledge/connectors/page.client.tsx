@@ -222,7 +222,7 @@ function ConnectorsList() {
   return (
     <KnowledgePageLayout
       title="Connectors"
-      description="Connectors sync content from external sources — like Confluence, Jira, GitHub, Google Drive, and websites — into knowledge bases on a schedule, so your agents can search and answer from it."
+      description="Connectors sync documents from external sources — like Confluence, Jira, GitHub, Google Drive, and websites — into knowledge bases on a schedule, so your agents can search and answer from them."
       createLabel="Create Connector"
       onCreateClick={() => setIsCreateDialogOpen(true)}
       isPending={isPending && !connectors}

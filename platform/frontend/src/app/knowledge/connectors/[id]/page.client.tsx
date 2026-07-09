@@ -1,6 +1,7 @@
 "use client";
 
 import type { archestraApiTypes } from "@archestra/shared";
+import { PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE } from "@archestra/shared";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeft,
@@ -247,11 +248,11 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Badge variant="outline" className="text-xs font-normal">
-                      during content sync
+                      during documents sync
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
-                    A content sync was still ingesting when this pass ran.
+                    A documents sync was still ingesting when this pass ran.
                     Documents ingested after it started stay access-restricted
                     until the next pass.
                   </TooltipContent>
@@ -287,7 +288,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
               <Badge variant="outline" className="text-xs font-normal">
                 {row.original.runType === "permission"
                   ? "Permissions"
-                  : "Content"}
+                  : "Documents"}
               </Badge>
             ),
           } satisfies ColumnDef<ConnectorRunItem>,
@@ -422,7 +423,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
                     ? "Starting..."
                     : connector.lastSyncStatus === "running"
                       ? "Syncing..."
-                      : "Sync Now"}
+                      : "Sync Documents Now"}
                 </Button>
               </span>
             </TooltipTrigger>
@@ -521,19 +522,19 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         </Button>
 
         <div className="rounded-lg border p-4">
-          {/* Two symmetric rows on wide screens: the content family (Last
-              Content Sync / Content Sync Schedule) sits directly above its
-              permissions counterpart (Last Permissions Sync / Permissions
+          {/* Two symmetric rows on wide screens: the documents family (Last
+              Documents Sync / Documents Sync Schedule) sits directly above
+              its permissions counterpart (Last Permissions Sync / Permissions
               Sync Frequency). */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm">
-            <MetadataItem label="Last Content Sync">
+            <MetadataItem label="Last Documents Sync">
               <div>
                 {connector.lastSyncAt
                   ? formatDate({ date: connector.lastSyncAt })
                   : "Never"}
               </div>
             </MetadataItem>
-            <MetadataItem label="Content Sync Schedule">
+            <MetadataItem label="Documents Sync Schedule">
               <div>{formatCronSchedule(connector.schedule)}</div>
             </MetadataItem>
             <MetadataItem label="Documents">
@@ -580,7 +581,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
 
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
-        ) : currentTab === "user-groups" ? (
+        ) : currentTab === "permissions" ? (
           <ConnectorUserGroupsTable connectorId={connectorId} />
         ) : (
           <div className="space-y-4">
@@ -594,7 +595,7 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
               >
                 <TabsList>
                   <TabsTrigger value="all">All runs</TabsTrigger>
-                  <TabsTrigger value="content">Content</TabsTrigger>
+                  <TabsTrigger value="content">Documents</TabsTrigger>
                   <TabsTrigger value="permission">Permissions</TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -698,6 +699,9 @@ function RunResultsSummary({ run }: { run: ConnectorRunItem }) {
 
 /** "Every 30 minutes" / "Every 6 hours" from an interval in seconds. */
 function formatSyncFrequency(intervalSeconds: number): string {
+  if (intervalSeconds === PERMISSION_SYNC_FOLLOW_DOCUMENTS_SCHEDULE) {
+    return "Follows the documents sync schedule";
+  }
   const minutes = Math.round(intervalSeconds / 60);
   if (minutes < 60 || minutes % 60 !== 0) {
     return `Every ${minutes} minute${minutes === 1 ? "" : "s"}`;

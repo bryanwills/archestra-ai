@@ -173,8 +173,8 @@ export function ConnectorRunDetailsDialog({
 
               {isPermissionRun && run.stats?.contentSyncActiveDuringRun && (
                 <p className="text-xs text-muted-foreground">
-                  A content sync was still ingesting while this pass ran, so it
-                  only covered documents ingested before it started — newer
+                  A documents sync was still ingesting while this pass ran, so
+                  it only covered documents ingested before it started — newer
                   documents stay access-restricted until the next pass.
                 </p>
               )}
