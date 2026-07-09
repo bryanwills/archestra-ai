@@ -582,7 +582,10 @@ function ConnectorDetail({ connectorId }: { connectorId: string }) {
         {currentTab === "documents" ? (
           <ConnectorDocumentsTable connectorId={connectorId} />
         ) : currentTab === "permissions" ? (
-          <ConnectorUserGroupsTable connectorId={connectorId} />
+          <ConnectorUserGroupsTable
+            connectorId={connectorId}
+            connectorType={connector.connectorType}
+          />
         ) : (
           <div className="space-y-4">
             {isAutoSync && (
