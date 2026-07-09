@@ -2,13 +2,13 @@
 import {
   calculatePaginationMeta,
   createPaginatedResponseSchema,
+  MIN_PERMISSION_SYNC_INTERVAL_SECONDS,
   PaginationQuerySchema,
   RouteId,
 } from "@archestra/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { userHasPermission } from "@/auth/utils";
-import config from "@/config";
 import { enterpriseTier } from "@/enterprise-tier";
 import {
   didKnowledgeSourceAclInputsChange,
@@ -30,7 +30,6 @@ import {
   KbExternalUserGroupModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
-  OrganizationModel,
   TaskModel,
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
@@ -488,6 +487,11 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           // github_app_configs row instead of an inline secret
           credentials: ConnectorCredentialsSchema.optional(),
           schedule: z.string().optional(),
+          permissionSyncIntervalSeconds: z
+            .number()
+            .int()
+            .min(MIN_PERMISSION_SYNC_INTERVAL_SECONDS)
+            .optional(),
           enabled: z.boolean().optional(),
           knowledgeBaseIds: z.array(z.string()).optional(),
           environmentId: z.string().uuid().nullable().optional(),
@@ -615,6 +619,7 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         secretId,
         environmentId: body.environmentId ?? null,
         schedule: body.schedule,
+        permissionSyncIntervalSeconds: body.permissionSyncIntervalSeconds,
         enabled: body.enabled,
       });
 
@@ -800,6 +805,11 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
           config: ConnectorConfigSchema.optional(),
           credentials: ConnectorCredentialsSchema.optional(),
           schedule: z.string().optional(),
+          permissionSyncIntervalSeconds: z
+            .number()
+            .int()
+            .min(MIN_PERMISSION_SYNC_INTERVAL_SECONDS)
+            .optional(),
           enabled: z.boolean().optional(),
           environmentId: z.string().uuid().nullable().optional(),
         }),
@@ -980,13 +990,37 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
         // Bump the ACL fencing epoch so any in-flight ACL write computed against
         // the old visibility/teamIds no-ops (the newest config change wins). For
         // org-wide/team-scoped this then runs the authoritative bulk refresh; for
-        // auto-sync-permissions the refresh is a no-op and the next scheduled
-        // (epoch-fenced) permission pass is the authoritative writer — existing
-        // docs stay fail-closed until then, no immediate pass is enqueued.
+        // auto-sync-permissions the refresh is a no-op and the (epoch-fenced)
+        // permission pass enqueued below is the authoritative writer — existing
+        // docs stay fail-closed until it runs.
         await KnowledgeBaseConnectorModel.bumpAclConfigEpoch(id);
         await knowledgeSourceAccessControlService.refreshConnectorDocumentAccessControlLists(
           id,
         );
+
+        if (
+          nextVisibility === "auto-sync-permissions" &&
+          connector.visibility !== "auto-sync-permissions"
+        ) {
+          // Switching TO auto-sync fail-closes the whole corpus; run the first
+          // pass now instead of leaving everything invisible until the next
+          // content ingest or interval tick. De-duplicated like every other
+          // permission-sync trigger.
+          const alreadyQueued = await TaskModel.hasPendingOrProcessing(
+            "permission_sync",
+            id,
+          );
+          if (!alreadyQueued) {
+            await taskQueueService.enqueue({
+              taskType: "permission_sync",
+              payload: { connectorId: id },
+            });
+            logger.info(
+              { connectorId: id },
+              "Enqueued permission sync after visibility switch to auto-sync-permissions",
+            );
+          }
+        }
       }
 
       return reply.send(updated);
@@ -1162,7 +1196,7 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
             failClosedDocuments: z.number(),
             /** A permission-sync pass is currently running. */
             permissionSyncRunning: z.boolean(),
-            /** Next scheduled pass per the effective global cron, if valid. */
+            /** Next scheduled pass: one interval after the last pass. */
             nextScheduledAt: z.string().nullable(),
           }),
         ),
@@ -1185,28 +1219,22 @@ const knowledgeBaseRoutes: FastifyPluginAsyncZod = async (fastify) => {
       // "Running" includes a queued (pending/processing) task: a manual
       // trigger enqueues first and the run row only appears once the worker
       // claims it, so the task check keeps the UI live through that gap.
-      const [coverage, hasRunningRun, hasQueuedTask, organization] =
-        await Promise.all([
-          KbDocumentModel.getAclCoverageByConnector(id),
-          ConnectorRunModel.hasRunningRun({
-            connectorId: id,
-            runType: "permission",
-          }),
-          TaskModel.hasPendingOrProcessing("permission_sync", id),
-          OrganizationModel.getById(organizationId),
-        ]);
+      const [coverage, hasRunningRun, hasQueuedTask] = await Promise.all([
+        KbDocumentModel.getAclCoverageByConnector(id),
+        ConnectorRunModel.hasRunningRun({
+          connectorId: id,
+          runType: "permission",
+        }),
+        TaskModel.hasPendingOrProcessing("permission_sync", id),
+      ]);
       const permissionSyncRunning = hasRunningRun || hasQueuedTask;
 
-      // Effective schedule: org override, else the env default. Cadence
-      // semantics (one interval after the last pass), matching the scheduler;
-      // an invalid cron yields no next-run rather than failing the endpoint.
-      const nextScheduledAt =
-        nextPermissionSyncDueAt({
-          schedule:
-            organization?.permissionSyncSchedule ??
-            config.kb.permissionSyncScheduleDefault,
-          lastPermissionSyncAt: connector.lastPermissionSyncAt,
-        })?.toISOString() ?? null;
+      // Cadence semantics (one interval after the last pass), matching the
+      // scheduler.
+      const nextScheduledAt = nextPermissionSyncDueAt({
+        intervalSeconds: connector.permissionSyncIntervalSeconds,
+        lastPermissionSyncAt: connector.lastPermissionSyncAt,
+      }).toISOString();
 
       return reply.send({
         totalDocuments: coverage.totalDocuments,

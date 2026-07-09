@@ -1,11 +1,9 @@
-import config from "@/config";
 import { getConnector } from "@/knowledge-base/connectors/registry";
 import { nextPermissionSyncDueAt } from "@/knowledge-base/permission-sync-schedule";
 import logger from "@/logging";
 import {
   ConnectorRunModel,
   KnowledgeBaseConnectorModel,
-  OrganizationModel,
   TaskModel,
 } from "@/models";
 import { taskQueueService } from "@/task-queue";
@@ -13,10 +11,10 @@ import { withinResumeBudget } from "./connector-resume-budget";
 
 /**
  * Runtime-isolated sibling of `check_due_connectors` for the permission-sync
- * family. Enqueues due `permission_sync` tasks per the GLOBAL permission-sync
- * schedule (org override, else the env default) — independent of each
- * connector's content `schedule` — and reaps expired permission runs. Kept
- * separate so content-run recovery is never overloaded with permission work.
+ * family. Enqueues due `permission_sync` tasks per each connector's
+ * permission-sync interval — independent of the connector's content
+ * `schedule` — and reaps expired permission runs. Kept separate so
+ * content-run recovery is never overloaded with permission work.
  */
 export async function handleCheckDuePermissionSyncs(): Promise<void> {
   const connectors = await KnowledgeBaseConnectorModel.findAllEnabled();
@@ -30,29 +28,15 @@ export async function handleCheckDuePermissionSyncs(): Promise<void> {
       "permission_sync",
       "connectorId",
     );
-    const scheduleByOrg = await resolveSchedulesByOrg(
-      autoSyncConnectors.map((connector) => connector.organizationId),
-    );
 
     for (const connector of autoSyncConnectors) {
-      const schedule = scheduleByOrg.get(connector.organizationId);
-      if (!schedule) continue;
-
-      // Cadence semantics: due one schedule interval after the last pass
-      // (manual or scheduled), not at the next wall-clock cron slot — a
-      // manual pass pushes the next scheduled one out instead of
-      // double-running minutes later.
+      // Cadence semantics: due one interval after the last pass (manual,
+      // content-ingest-triggered, or scheduled) — a manual pass pushes the
+      // next scheduled one out instead of double-running minutes later.
       const dueAt = nextPermissionSyncDueAt({
-        schedule,
+        intervalSeconds: connector.permissionSyncIntervalSeconds,
         lastPermissionSyncAt: connector.lastPermissionSyncAt,
       });
-      if (dueAt === null) {
-        logger.warn(
-          { connectorId: connector.id, schedule },
-          "Failed to evaluate permission-sync schedule",
-        );
-        continue;
-      }
       if (dueAt <= new Date() && !activeConnectorIds.has(connector.id)) {
         try {
           await taskQueueService.enqueue({
@@ -92,25 +76,6 @@ function connectorSupportsPermissionSync(connectorType: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Resolve each org's effective permission-sync cron once:
- * `organization.permissionSyncSchedule ?? env default`.
- */
-async function resolveSchedulesByOrg(
-  organizationIds: string[],
-): Promise<Map<string, string>> {
-  const distinctOrgIds = [...new Set(organizationIds)];
-  const entries = await Promise.all(
-    distinctOrgIds.map(async (organizationId) => {
-      const org = await OrganizationModel.getById(organizationId);
-      const schedule =
-        org?.permissionSyncSchedule ?? config.kb.permissionSyncScheduleDefault;
-      return [organizationId, schedule] as const;
-    }),
-  );
-  return new Map(entries);
 }
 
 async function reapExpiredPermissionRuns(): Promise<void> {

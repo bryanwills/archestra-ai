@@ -149,14 +149,6 @@ const organizationsTable = pgTable("organization", {
   /** LLM model used for reranking (e.g. "gpt-4o") */
   rerankerModel: text("reranker_model"),
 
-  /**
-   * Global cron schedule for the knowledge-base permission-sync pass, applied to
-   * all `auto-sync-permissions` connectors. NULL = use the
-   * `ARCHESTRA_KB_PERMISSION_SYNC_SCHEDULE` env default. This is a global org
-   * setting, not per-connector.
-   */
-  permissionSyncSchedule: text("permission_sync_schedule"),
-
   /** @deprecated Superseded by `defaultModelId` (FK). Retained, no longer read or written. */
   defaultLlmModel: text("default_llm_model"),
   /** @deprecated Superseded by `defaultModelId` (FK). Retained, no longer read or written. */

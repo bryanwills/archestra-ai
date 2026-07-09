@@ -16,7 +16,6 @@ vi.mock("@/knowledge-base/connector-credentials", () => ({
 }));
 
 import { and, desc, eq } from "drizzle-orm";
-import config from "@/config";
 import db, { schema } from "@/database";
 import { permissionSyncService } from "@/knowledge-base/permission-sync";
 import { ConnectorRunModel } from "@/models";
@@ -75,7 +74,7 @@ describe("permission-sync pass (generation / epoch / resume / groups)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // One doc per flush so per-batch behavior (checkpoint, partial) is exact.
-    config.kb.permissionSyncBatchSize = 1;
+    permissionSyncService.batchSize = 1;
   });
 
   async function seedConnector(organizationId: string) {

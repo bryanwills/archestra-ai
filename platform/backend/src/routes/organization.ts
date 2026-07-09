@@ -7,7 +7,6 @@ import {
   RouteId,
   type SupportedProvider,
 } from "@archestra/shared";
-import { Cron } from "croner";
 import { and, eq, inArray, like } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -513,20 +512,6 @@ const organizationRoutes: FastifyPluginAsyncZod = async (fastify) => {
           throw new ApiError(
             400,
             "Embedding model must be marked as an embedding model with configured dimensions in LLM Providers > Models.",
-          );
-        }
-      }
-
-      // Validate the global permission-sync cron (mirrors the connector-schedule
-      // validation in check-due-connectors-handler). `null` is allowed (resets
-      // to the env default).
-      if (body.permissionSyncSchedule) {
-        try {
-          new Cron(body.permissionSyncSchedule);
-        } catch {
-          throw new ApiError(
-            400,
-            "Invalid permission-sync schedule (must be a valid cron expression)",
           );
         }
       }

@@ -1,5 +1,7 @@
 import { ADMIN_ROLE_NAME } from "@archestra/shared";
+import { sql } from "drizzle-orm";
 import config from "@/config";
+import db from "@/database";
 import { enterpriseTier } from "@/enterprise-tier";
 import { knowledgeSourceAccessControlService } from "@/knowledge-base";
 import {
@@ -866,6 +868,66 @@ describe("knowledge base routes", () => {
       });
     });
 
+    test("persists an explicit permission-sync interval and defaults it otherwise", async () => {
+      const withInterval = await app.inject({
+        method: "POST",
+        url: "/api/connectors",
+        payload: {
+          name: "Interval Depot",
+          connectorType: "perforce",
+          config: {
+            type: "perforce",
+            serverUrl: "https://perforce.example.com:8080",
+            depotPaths: ["//depot/docs"],
+          },
+          credentials: { email: "svc-knowledge", apiToken: "ticket" },
+          permissionSyncIntervalSeconds: 6 * 60 * 60,
+        },
+      });
+      expect(withInterval.statusCode).toBe(200);
+      expect(withInterval.json().permissionSyncIntervalSeconds).toBe(
+        6 * 60 * 60,
+      );
+
+      const withoutInterval = await app.inject({
+        method: "POST",
+        url: "/api/connectors",
+        payload: {
+          name: "Default Interval Depot",
+          connectorType: "perforce",
+          config: {
+            type: "perforce",
+            serverUrl: "https://perforce.example.com:8080",
+            depotPaths: ["//depot/specs"],
+          },
+          credentials: { email: "svc-knowledge", apiToken: "ticket" },
+        },
+      });
+      expect(withoutInterval.statusCode).toBe(200);
+      expect(withoutInterval.json().permissionSyncIntervalSeconds).toBe(
+        30 * 60,
+      );
+    });
+
+    test("rejects a permission-sync interval below the 15-minute floor", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/connectors",
+        payload: {
+          name: "Too Frequent",
+          connectorType: "perforce",
+          config: {
+            type: "perforce",
+            serverUrl: "https://perforce.example.com:8080",
+            depotPaths: ["//depot/docs"],
+          },
+          credentials: { email: "svc-knowledge", apiToken: "ticket" },
+          permissionSyncIntervalSeconds: 60,
+        },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
     test("rejects perforce depot paths containing revision metacharacters", async () => {
       const response = await app.inject({
         method: "POST",
@@ -1042,6 +1104,75 @@ describe("knowledge base routes", () => {
       expect(body.name).toBe("Updated Connector");
       expect(body.enabled).toBe(false);
       expect(body.schedule).toBe("0 0 * * *");
+    });
+
+    test("updates the permission-sync interval", async () => {
+      const connector = await KnowledgeBaseConnectorModel.create({
+        organizationId,
+        name: "Interval Connector",
+        connectorType: "jira",
+        config: {
+          type: "jira",
+          jiraBaseUrl: "https://test.atlassian.net",
+          isCloud: true,
+          projectKey: "TEST",
+        },
+      });
+
+      const response = await app.inject({
+        method: "PUT",
+        url: `/api/connectors/${connector.id}`,
+        payload: { permissionSyncIntervalSeconds: 60 * 60 },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().permissionSyncIntervalSeconds).toBe(60 * 60);
+
+      const belowFloor = await app.inject({
+        method: "PUT",
+        url: `/api/connectors/${connector.id}`,
+        payload: { permissionSyncIntervalSeconds: 60 },
+      });
+      expect(belowFloor.statusCode).toBe(400);
+    });
+
+    test("switching a connector to auto-sync-permissions enqueues an immediate deduped permission sync", async () => {
+      const connector = await KnowledgeBaseConnectorModel.create({
+        organizationId,
+        name: "Switch Connector",
+        connectorType: "github",
+        config: {
+          type: "github",
+          githubUrl: "https://api.github.com",
+          owner: "test-org",
+          authMethod: "pat",
+        },
+        visibility: "org-wide",
+      });
+
+      const response = await app.inject({
+        method: "PUT",
+        url: `/api/connectors/${connector.id}`,
+        payload: { visibility: "auto-sync-permissions" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(
+        await TaskModel.hasPendingOrProcessing("permission_sync", connector.id),
+      ).toBe(true);
+
+      // A second no-op-ish update (visibility unchanged) must not enqueue more.
+      const again = await app.inject({
+        method: "PUT",
+        url: `/api/connectors/${connector.id}`,
+        payload: { visibility: "auto-sync-permissions", teamIds: ["team-x"] },
+      });
+      expect(again.statusCode).toBe(200);
+      const { rows } = await db.execute<{ count: number }>(sql`
+        SELECT COUNT(*)::int AS count
+        FROM tasks
+        WHERE task_type = 'permission_sync'
+          AND payload->>'connectorId' = ${connector.id}
+      `);
+      expect(rows[0]?.count).toBe(1);
     });
 
     test("persists connector updates across reads", async () => {

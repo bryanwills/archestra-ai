@@ -7898,6 +7898,13 @@
           "notNull": true,
           "default": "'0 */6 * * *'"
         },
+        "permission_sync_interval_seconds": {
+          "name": "permission_sync_interval_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1800
+        },
         "enabled": {
           "name": "enabled",
           "type": "boolean",
@@ -11125,12 +11132,6 @@
         },
         "reranker_model": {
           "name": "reranker_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "permission_sync_schedule": {
-          "name": "permission_sync_schedule",
           "type": "text",
           "primaryKey": false,
           "notNull": false

@@ -29,6 +29,12 @@ import { buildDocumentAccessControlList } from "./source-access-control";
 
 const WORKER_ID = `${hostname()}#${process.pid}`;
 
+// Batch size for the pass's ACL writes and its generation-gated fail-close
+// sweep. Bounds per-transaction work so mass-change bursts stay in short
+// transactions (bounded WAL/lock). Fixed like EMBEDDING_BATCH_SIZE — not an
+// operator knob.
+const PERMISSION_SYNC_BATCH_SIZE = 200;
+
 type PermissionSyncPhase = "groups" | "documents";
 
 /**
@@ -51,6 +57,13 @@ type PermissionSyncCheckpoint = {
  * fail-closes anything no longer visible upstream — never re-embedding.
  */
 class PermissionSyncService {
+  /**
+   * ACL-write / fail-close-sweep batch size. Fixed in production
+   * (PERMISSION_SYNC_BATCH_SIZE); tests shrink it to pin per-batch
+   * checkpoint/partial behavior.
+   */
+  batchSize = PERMISSION_SYNC_BATCH_SIZE;
+
   async executePass(
     connectorId: string,
     options?: { logger?: pino.Logger; getLogOutput?: () => string },
@@ -268,7 +281,7 @@ class PermissionSyncService {
                 memberEmail,
               });
             }
-            if (pending.length >= config.kb.permissionSyncBatchSize) {
+            if (pending.length >= this.batchSize) {
               await KbExternalUserGroupModel.upsertMany(pending);
               pending = [];
               await yieldToEventLoop();
@@ -353,7 +366,7 @@ class PermissionSyncService {
             permissions: item.permissions,
           });
           if (item.cursor !== undefined) latestCursor = item.cursor;
-          if (batch.length >= config.kb.permissionSyncBatchSize) {
+          if (batch.length >= this.batchSize) {
             await flush();
           }
         }
@@ -366,7 +379,7 @@ class PermissionSyncService {
           connectorId,
           generation,
           aclConfigEpoch,
-          batchSize: config.kb.permissionSyncBatchSize,
+          batchSize: this.batchSize,
         });
         stats.failClosed += swept;
         if (swept === 0) break;

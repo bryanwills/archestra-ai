@@ -157,6 +157,8 @@ class KnowledgeBaseConnectorModel {
         secretId: schema.knowledgeBaseConnectorsTable.secretId,
         environmentId: schema.knowledgeBaseConnectorsTable.environmentId,
         schedule: schema.knowledgeBaseConnectorsTable.schedule,
+        permissionSyncIntervalSeconds:
+          schema.knowledgeBaseConnectorsTable.permissionSyncIntervalSeconds,
         enabled: schema.knowledgeBaseConnectorsTable.enabled,
         lastSyncAt: schema.knowledgeBaseConnectorsTable.lastSyncAt,
         lastSyncStatus: schema.knowledgeBaseConnectorsTable.lastSyncStatus,
@@ -217,6 +219,8 @@ class KnowledgeBaseConnectorModel {
         secretId: schema.knowledgeBaseConnectorsTable.secretId,
         environmentId: schema.knowledgeBaseConnectorsTable.environmentId,
         schedule: schema.knowledgeBaseConnectorsTable.schedule,
+        permissionSyncIntervalSeconds:
+          schema.knowledgeBaseConnectorsTable.permissionSyncIntervalSeconds,
         enabled: schema.knowledgeBaseConnectorsTable.enabled,
         lastSyncAt: schema.knowledgeBaseConnectorsTable.lastSyncAt,
         lastSyncStatus: schema.knowledgeBaseConnectorsTable.lastSyncStatus,

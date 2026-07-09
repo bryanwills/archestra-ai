@@ -1,7 +1,9 @@
+import { DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS } from "@archestra/shared";
 import {
   bigint,
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -46,6 +48,15 @@ const knowledgeBaseConnectorsTable = pgTable(
       { onDelete: "set null" },
     ),
     schedule: text("schedule").notNull().default("0 */6 * * *"),
+    /**
+     * Cadence of the scheduled permission-sync pass for `auto-sync-permissions`
+     * connectors: the next pass is due this many seconds after the last one
+     * (manual, content-ingest-triggered, or scheduled) finished starting.
+     * Ignored for other visibilities.
+     */
+    permissionSyncIntervalSeconds: integer("permission_sync_interval_seconds")
+      .notNull()
+      .default(DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS),
     enabled: boolean("enabled").notNull().default(true),
     lastSyncAt: timestamp("last_sync_at", { mode: "date" }),
     lastSyncStatus: text("last_sync_status").$type<ConnectorSyncStatus>(),

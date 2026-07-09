@@ -18,7 +18,7 @@ ALTER TABLE "kb_documents" ADD COLUMN "acl_sync_generation" bigint;--> statement
 ALTER TABLE "knowledge_base_connectors" ADD COLUMN "last_permission_sync_at" timestamp;--> statement-breakpoint
 ALTER TABLE "knowledge_base_connectors" ADD COLUMN "last_permission_sync_status" text;--> statement-breakpoint
 ALTER TABLE "knowledge_base_connectors" ADD COLUMN "acl_config_epoch" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
-ALTER TABLE "organization" ADD COLUMN "permission_sync_schedule" text;--> statement-breakpoint
+ALTER TABLE "knowledge_base_connectors" ADD COLUMN "permission_sync_interval_seconds" integer DEFAULT 1800 NOT NULL;--> statement-breakpoint
 ALTER TABLE "kb_external_user_group" ADD CONSTRAINT "kb_external_user_group_connector_id_knowledge_base_connectors_id_fk" FOREIGN KEY ("connector_id") REFERENCES "public"."knowledge_base_connectors"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "kb_external_user_group_unique_idx" ON "kb_external_user_group" USING btree ("connector_id","group_id","member_email");--> statement-breakpoint
 CREATE INDEX "kb_external_user_group_member_email_idx" ON "kb_external_user_group" USING btree ("member_email");--> statement-breakpoint

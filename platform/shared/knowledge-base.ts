@@ -6,6 +6,20 @@ export type EmbeddingModel = string;
 /** Maximum number of chunks to embed per embedding API call */
 export const EMBEDDING_BATCH_SIZE = 100;
 
+/**
+ * Default cadence of the scheduled permission-sync pass for
+ * `auto-sync-permissions` connectors: the next pass is due this many seconds
+ * after the last one (manual, content-ingest-triggered, or scheduled) started.
+ */
+export const DEFAULT_PERMISSION_SYNC_INTERVAL_SECONDS = 30 * 60;
+
+/**
+ * Floor for the per-connector permission-sync interval. Also bounds how long
+ * per-user group-membership lookups may be served from cache: a cached ACL
+ * check is never staler than the shortest interval a connector can sync at.
+ */
+export const MIN_PERMISSION_SYNC_INTERVAL_SECONDS = 15 * 60;
+
 export const SUPPORTED_EMBEDDING_DIMENSIONS = [
   3072, 1536, 1024, 768, 384,
 ] as const;
