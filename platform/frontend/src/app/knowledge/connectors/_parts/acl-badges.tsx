@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useTeams } from "@/lib/teams/team.query";
 
-const MAX_VISIBLE_ENTRIES = 3;
+const MAX_VISIBLE_ENTRIES = 2;
 
 /**
  * Human-readable rendering of a document's ACL, replicating the Models
@@ -53,8 +53,13 @@ export function AclBadges({ acl }: { acl: string[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {visible.map(({ entry, label }) => (
-        <Badge key={entry} variant="outline" className="text-xs" title={entry}>
-          {label}
+        <Badge
+          key={entry}
+          variant="outline"
+          className="max-w-full text-xs"
+          title={entry}
+        >
+          <span className="truncate">{label}</span>
         </Badge>
       ))}
       {hidden.length > 0 && (

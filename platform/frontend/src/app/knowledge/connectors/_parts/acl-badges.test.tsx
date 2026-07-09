@@ -39,7 +39,7 @@ describe("AclBadges", () => {
     expect(screen.getByText("Team: team-unknown")).toBeInTheDocument();
   });
 
-  it("collapses long ACLs behind a +N badge that lists the rest", () => {
+  it("shows only the first two entries and collapses the rest behind +N more", () => {
     render(
       <AclBadges
         acl={[
@@ -52,8 +52,10 @@ describe("AclBadges", () => {
       />,
     );
     expect(screen.getByText("Everyone in org")).toBeInTheDocument();
-    expect(screen.getByText("+2 more")).toBeInTheDocument();
+    expect(screen.getByText("a@example.com")).toBeInTheDocument();
+    expect(screen.getByText("+3 more")).toBeInTheDocument();
     // Hidden entries stay discoverable in the overflow tooltip.
+    expect(screen.getByText("b@example.com")).toBeInTheDocument();
     expect(screen.getByText("Group: jira_engineers")).toBeInTheDocument();
     expect(screen.getByText("Group: jira_admins")).toBeInTheDocument();
   });
@@ -64,8 +66,8 @@ describe("AclBadges", () => {
       (_, i) => `user_email:user${i}@example.com`,
     );
     render(<AclBadges acl={acl} />);
-    // 3 visible on one line + 997 behind the overflow badge…
-    expect(screen.getByText("+997 more")).toBeInTheDocument();
+    // 2 visible + 998 behind the overflow badge…
+    expect(screen.getByText("+998 more")).toBeInTheDocument();
     // …whose (scrollable) tooltip lists ALL collapsed entries.
     expect(screen.getByText("user17@example.com")).toBeInTheDocument();
     expect(screen.getByText("user999@example.com")).toBeInTheDocument();

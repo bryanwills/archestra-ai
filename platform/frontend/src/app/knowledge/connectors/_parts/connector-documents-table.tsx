@@ -76,12 +76,16 @@ export function ConnectorDocumentsTable({
     documentsResponse?.pagination ?? null;
   const totalDocuments = paginationMeta?.total ?? 0;
 
+  // The shared Table is `table-fixed`: without explicit sizes every column
+  // gets an equal width and the natural-width Access badges overflow under
+  // the Last Updated column.
   const columns = useMemo<ColumnDef<KnowledgeBaseDocumentListItem>[]>(
     () => [
       {
         id: "title",
         accessorKey: "title",
         header: "Title",
+        size: 280,
         cell: ({ row }) => (
           <div className="flex items-center gap-2 max-w-[400px]">
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -103,6 +107,7 @@ export function ConnectorDocumentsTable({
         id: "sourceUrl",
         accessorKey: "sourceUrl",
         header: "Source URL",
+        size: 240,
         cell: ({ row }) =>
           row.original.sourceUrl ? (
             <Link
@@ -126,12 +131,15 @@ export function ConnectorDocumentsTable({
         id: "acl",
         accessorKey: "acl",
         header: "Access",
+        size: 340,
+        minSize: 240,
         cell: ({ row }) => <AclBadges acl={row.original.acl} />,
       },
       {
         id: "updatedAt",
         accessorKey: "updatedAt",
         header: "Last Updated",
+        size: 160,
         cell: ({ row }) => (
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Clock className="h-3.5 w-3.5 shrink-0" />
@@ -146,6 +154,7 @@ export function ConnectorDocumentsTable({
       {
         id: "actions",
         header: "Actions",
+        size: 90,
         cell: ({ row }) => {
           const actions: TableRowAction[] = [
             {
