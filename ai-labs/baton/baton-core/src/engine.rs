@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use enumset::EnumSet;
+use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::ToolName;
@@ -66,7 +68,7 @@ pub enum TaintPolicy {
 ///     let _ = trajectory.record_result(permit, "second");
 /// }
 /// ```
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Permit {
     request: ToolRequest,
     result_label: Label,
@@ -92,53 +94,29 @@ impl Permit {
 
 /// [`Trajectory::record_result`] refused a permit: it no longer (or never
 /// did) describe that trajectory's context, so the flow must be re-evaluated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RejectedPermit {
     /// The permit was minted for a different trajectory.
+    #[error("permit was minted for {minted_for}, not {this}")]
     ForeignTrajectory {
         minted_for: TrajectoryId,
         this: TrajectoryId,
     },
     /// The trajectory grew between `evaluate` and the recording.
+    #[error("permit granted at trajectory length {granted_at}, but the trajectory now has {current_len} turns")]
     Stale { granted_at: usize, current_len: usize },
 }
-
-impl fmt::Display for RejectedPermit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ForeignTrajectory { minted_for, this } => {
-                write!(f, "permit was minted for {minted_for}, not {this}")
-            }
-            Self::Stale {
-                granted_at,
-                current_len,
-            } => write!(
-                f,
-                "permit granted at trajectory length {granted_at}, but the trajectory now has {current_len} turns"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RejectedPermit {}
 
 /// [`PolicyEngine::register`] refused a contract: a contract for that tool is
 /// already registered. Contracts are the policy boundary, so a silent replace
 /// could weaken policy unnoticed — registration fails loudly instead.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("a contract for `{tool}` is already registered")]
 pub struct DuplicateContract {
     pub tool: ToolName,
 }
 
-impl fmt::Display for DuplicateContract {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "a contract for `{}` is already registered", self.tool)
-    }
-}
-
-impl std::error::Error for DuplicateContract {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum BlockReason {
     DeniedByAuthority {
         authority: AuthorityName,
@@ -179,7 +157,7 @@ impl fmt::Display for BlockReason {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 #[must_use = "a dropped Decision means the flow was neither executed nor blocked"]
 pub enum Decision {
     Permitted(Permit),
@@ -510,10 +488,7 @@ fn needed_grant(violations: &[Violation], request: &ToolRequest, requirements: &
                     .extend(request.recipients.iter().cloned());
             }
             Violation::Breach(Breach::ForbiddenPriorEffects { effects }) => {
-                grant
-                    .effects
-                    .get_or_insert_with(BTreeSet::new)
-                    .extend(effects.iter().copied());
+                *grant.effects.get_or_insert_with(EnumSet::new) |= *effects;
             }
             Violation::Breach(Breach::ConfirmationMissing { .. } | Breach::ConfirmationForOtherTool { .. }) => {
                 grant.confirms = true;
@@ -542,9 +517,12 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::BTreeSet;
 
+    use proptest::prelude::*;
+
     use super::*;
     use crate::contract::{AttentionRule, AudienceRule, Breach, Requirements};
     use crate::dimension::{Audience, Effect, Effects, KnownTrust, Trust, UserId};
+    use crate::test_strategies::arb_grant;
     use crate::turn::Speaker;
 
     fn user(id: &str) -> UserId {
@@ -620,7 +598,7 @@ mod tests {
                 user("charlie"),
                 user("stranger"),
             ])),
-            effects: Some(BTreeSet::from([Effect::Mutation, Effect::Egress])),
+            effects: Some(Effect::Mutation | Effect::Egress),
             confirms: true,
         }
     }
@@ -1154,7 +1132,7 @@ mod tests {
             .register(ToolContract {
                 name: ToolName::new("report.generate"),
                 requires: Requirements {
-                    forbid_prior_effects: BTreeSet::from([Effect::Egress]),
+                    forbid_prior_effects: EnumSet::from(Effect::Egress),
                     ..Requirements::default()
                 },
                 output_label: Label::identity(),
@@ -1189,7 +1167,7 @@ mod tests {
         assert_eq!(
             violations,
             vec![Violation::Breach(Breach::ForbiddenPriorEffects {
-                effects: BTreeSet::from([Effect::Egress]),
+                effects: EnumSet::from(Effect::Egress),
             })]
         );
     }
@@ -1293,7 +1271,7 @@ mod tests {
             .register(ToolContract {
                 name: ToolName::new("report.generate"),
                 requires: Requirements {
-                    forbid_prior_effects: BTreeSet::from([Effect::Egress]),
+                    forbid_prior_effects: EnumSet::from(Effect::Egress),
                     ..Requirements::default()
                 },
                 output_label: Label::identity(),
@@ -1359,34 +1337,30 @@ mod tests {
         assert!(signed_by(&permit).iter().all(|a| a == "confirms-auth"));
     }
 
-    #[test]
-    fn tuple_nesting_is_associative_for_routing() {
-        let needs = [
-            Grant::empty(),
-            trust_mandate(),
-            audience_mandate(&["bob"]),
-            confirms_mandate(),
-        ];
-        let left = (
-            Mandated::new("a", trust_mandate(), true),
-            (
-                Mandated::new("b", audience_mandate(&["bob"]), true),
-                Mandated::new("c", confirms_mandate(), true),
-            ),
-        );
-        let right = (
-            (
+    proptest! {
+        /// First-success `or_else` is associative, so the two tuple nestings of
+        /// the same three members route any need to the same authority.
+        #[test]
+        fn tuple_nesting_is_associative_for_routing(need in arb_grant()) {
+            let left = (
                 Mandated::new("a", trust_mandate(), true),
-                Mandated::new("b", audience_mandate(&["bob"]), true),
-            ),
-            Mandated::new("c", confirms_mandate(), true),
-        );
-        let request = ToolRequest::new(ToolName::new("noop"));
-        let context = Label::identity();
-        for need in &needs {
-            let left_name = left.rule(need, &request, &context, &[]).map(|(name, _)| name);
-            let right_name = right.rule(need, &request, &context, &[]).map(|(name, _)| name);
-            assert_eq!(left_name, right_name, "need={need:?}");
+                (
+                    Mandated::new("b", audience_mandate(&["bob"]), true),
+                    Mandated::new("c", confirms_mandate(), true),
+                ),
+            );
+            let right = (
+                (
+                    Mandated::new("a", trust_mandate(), true),
+                    Mandated::new("b", audience_mandate(&["bob"]), true),
+                ),
+                Mandated::new("c", confirms_mandate(), true),
+            );
+            let request = ToolRequest::new(ToolName::new("noop"));
+            let context = Label::identity();
+            let left_name = left.rule(&need, &request, &context, &[]).map(|(name, _)| name);
+            let right_name = right.rule(&need, &request, &context, &[]).map(|(name, _)| name);
+            prop_assert_eq!(left_name, right_name);
         }
     }
 

@@ -4,6 +4,8 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use enumset::EnumSet;
+use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use crate::ToolName;
@@ -11,7 +13,7 @@ use crate::dimension::{Adequacy, Effect, KnownTrust, UserId};
 use crate::label::Label;
 
 /// A concrete tool invocation the policy is asked to authorize.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolRequest {
     pub tool: ToolName,
     /// Readers this call would expose context to (e.g. e-mail recipients).
@@ -36,7 +38,7 @@ impl ToolRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AudienceRule {
     #[default]
     Unrestricted,
@@ -45,7 +47,7 @@ pub enum AudienceRule {
     RecipientsWithinContext,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttentionRule {
     #[default]
     NotRequired,
@@ -54,7 +56,7 @@ pub enum AttentionRule {
 }
 
 /// What a tool demands of the context label before it may run.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Requirements {
     /// Minimum *known* trust. `Trust::Unknown` never satisfies any bar —
     /// deliberately over [`KnownTrust`], so "unknown suffices" cannot even be
@@ -66,11 +68,11 @@ pub struct Requirements {
     pub audience: AudienceRule,
     pub attention: AttentionRule,
     /// Effects that must not already have happened in the context.
-    pub forbid_prior_effects: BTreeSet<Effect>,
+    pub forbid_prior_effects: EnumSet<Effect>,
 }
 
 /// A requirement that is provably not met.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Breach {
     TrustBelow {
         required: KnownTrust,
@@ -93,7 +95,7 @@ pub enum Breach {
         requested: ToolName,
     },
     ForbiddenPriorEffects {
-        effects: BTreeSet<Effect>,
+        effects: EnumSet<Effect>,
     },
 }
 
@@ -121,7 +123,7 @@ impl fmt::Display for Breach {
             }
             Self::ForbiddenPriorEffects { effects } => {
                 write!(f, "context already carries forbidden effects:")?;
-                for e in effects {
+                for e in effects.iter() {
                     write!(f, " {e}")?;
                 }
                 Ok(())
@@ -133,7 +135,7 @@ impl fmt::Display for Breach {
 /// A requirement that cannot be proven either way because something is
 /// `Unknown`. Kept apart from [`Breach`] so policy can treat missing
 /// knowledge differently from proven violations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Unprovable {
     TrustUnknown,
     AudienceUnknown,
@@ -157,7 +159,7 @@ impl fmt::Display for Unprovable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Violation {
     Breach(Breach),
     Unprovable(Unprovable),
@@ -217,7 +219,7 @@ impl Violation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[must_use]
 pub enum Verdict {
     Allow,
@@ -232,7 +234,7 @@ pub enum Verdict {
 /// A label cannot express a user confirmation at all (confirmations are
 /// structural on user turns), so a contract cannot re-arm a confirmation
 /// gate from its own output.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolContract {
     pub name: ToolName,
     pub requires: Requirements,
@@ -483,7 +485,7 @@ mod tests {
     #[test]
     fn forbidden_prior_effects_are_enforced() {
         let requirements = Requirements {
-            forbid_prior_effects: BTreeSet::from([Effect::Mutation]),
+            forbid_prior_effects: EnumSet::from(Effect::Mutation),
             ..Requirements::default()
         };
         let request = ToolRequest::new(ToolName::new("report.generate"));
@@ -495,7 +497,7 @@ mod tests {
         assert_eq!(
             requirements.check(&mutated, None, &request),
             Verdict::Escalate(vec![Violation::Breach(Breach::ForbiddenPriorEffects {
-                effects: BTreeSet::from([Effect::Mutation]),
+                effects: EnumSet::from(Effect::Mutation),
             })])
         );
 

@@ -14,8 +14,12 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use enumset::{EnumSet, EnumSetType};
+use serde::{Deserialize, Serialize};
+
 /// A user known to the surrounding system (ACLs, directories, ...).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct UserId(String);
 
 impl UserId {
@@ -60,7 +64,7 @@ pub(crate) enum Adequacy<W> {
 /// satisfied and private turns egress anywhere. "Who has already touched
 /// this" is provenance — a different dimension, not this one. `Public` is
 /// the identity, `Unknown` is absorbing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Audience {
     Public,
     Readers(BTreeSet<UserId>),
@@ -122,7 +126,7 @@ impl fmt::Display for Audience {
 }
 
 /// A trust judgement that has actually been made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum KnownTrust {
     Suspicious,
     Trusted,
@@ -148,7 +152,7 @@ impl fmt::Display for KnownTrust {
 /// The fold keeps the strongest bad evidence: definite suspicion dominates
 /// missing knowledge, which dominates trust
 /// (`Suspicious ∧ Unknown = Suspicious`, `Trusted ∧ Unknown = Unknown`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Trust {
     Known(KnownTrust),
     Unknown,
@@ -193,7 +197,14 @@ impl fmt::Display for Trust {
 }
 
 /// A side effect a tool has on the world outside the trajectory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// `EnumSetType` gives the fixed-variant set a `u8`-bitset representation
+/// (`EnumSet<Effect>`) — it also provides `Copy`/`Clone`/`PartialEq`/`Eq`, so
+/// those are intentionally absent from the derive list. `serialize_repr =
+/// "list"` keeps the JSON legible (`["mutation", …]`) and `serialize_deny_unknown`
+/// makes an unrecognized effect fail deserialization closed rather than drop.
+#[derive(EnumSetType, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[enumset(serialize_repr = "list", serialize_deny_unknown)]
 pub enum Effect {
     Mutation,
     Egress,
@@ -212,15 +223,15 @@ impl fmt::Display for Effect {
 ///
 /// Union fold; `Unknown` (an unannotated tool ran, so anything may have
 /// happened) is absorbing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effects {
-    Declared(BTreeSet<Effect>),
+    Declared(EnumSet<Effect>),
     Unknown,
 }
 
 impl Effects {
     pub fn none() -> Self {
-        Self::Declared(BTreeSet::new())
+        Self::Declared(EnumSet::new())
     }
 
     pub fn declared(effects: impl IntoIterator<Item = Effect>) -> Self {
@@ -231,7 +242,7 @@ impl Effects {
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
-            (Self::Declared(a), Self::Declared(b)) => Self::Declared(a.union(&b).copied().collect()),
+            (Self::Declared(a), Self::Declared(b)) => Self::Declared(a | b),
         }
     }
 
@@ -240,11 +251,11 @@ impl Effects {
     /// unannotated tool ran), so they are `Unprovable`. `Declared` holds iff
     /// the intersection is empty, and the `Fails` witness is exactly the
     /// forbidden effects that are present.
-    pub(crate) fn avoids(&self, forbidden: &BTreeSet<Effect>) -> Adequacy<BTreeSet<Effect>> {
+    pub(crate) fn avoids(&self, forbidden: &EnumSet<Effect>) -> Adequacy<EnumSet<Effect>> {
         match self {
             Self::Unknown => Adequacy::Unprovable,
             Self::Declared(present) => {
-                let hit: BTreeSet<Effect> = forbidden.intersection(present).copied().collect();
+                let hit = *forbidden & *present;
                 if hit.is_empty() {
                     Adequacy::Holds
                 } else {
@@ -275,7 +286,10 @@ impl fmt::Display for Effects {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+    use crate::test_strategies::{arb_audience, arb_effects, arb_trust};
 
     fn user(id: &str) -> UserId {
         UserId::new(id)
@@ -312,22 +326,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn audience_combine_is_associative() {
-        let samples = [
-            Audience::Public,
-            Audience::readers([user("alice"), user("bob")]),
-            Audience::readers([user("bob")]),
-            Audience::Unknown,
-        ];
-        for a in &samples {
-            for b in &samples {
-                for c in &samples {
-                    let left = a.clone().combine(b.clone()).combine(c.clone());
-                    let right = a.clone().combine(b.clone().combine(c.clone()));
-                    assert_eq!(left, right, "a={a} b={b} c={c}");
-                }
-            }
+    proptest! {
+        /// Each data dimension's `combine` is a commutative, idempotent
+        /// semilattice — the taint-fold algebra the whole design rests on.
+        #[test]
+        fn audience_combine_is_a_semilattice(a in arb_audience(), b in arb_audience(), c in arb_audience()) {
+            prop_assert_eq!(
+                a.clone().combine(b.clone()).combine(c.clone()),
+                a.clone().combine(b.clone().combine(c.clone()))
+            );
+            prop_assert_eq!(a.clone().combine(b.clone()), b.clone().combine(a.clone()));
+            prop_assert_eq!(a.clone().combine(a.clone()), a);
+        }
+
+        #[test]
+        fn trust_combine_is_a_semilattice(a in arb_trust(), b in arb_trust(), c in arb_trust()) {
+            prop_assert_eq!(a.combine(b).combine(c), a.combine(b.combine(c)));
+            prop_assert_eq!(a.combine(b), b.combine(a));
+            prop_assert_eq!(a.combine(a), a);
+        }
+
+        #[test]
+        fn effects_combine_is_a_semilattice(a in arb_effects(), b in arb_effects(), c in arb_effects()) {
+            prop_assert_eq!(
+                a.clone().combine(b.clone()).combine(c.clone()),
+                a.clone().combine(b.clone().combine(c.clone()))
+            );
+            prop_assert_eq!(a.clone().combine(b.clone()), b.clone().combine(a.clone()));
+            prop_assert_eq!(a.clone().combine(a.clone()), a);
         }
     }
 
@@ -392,12 +418,12 @@ mod tests {
 
     #[test]
     fn effects_avoids_over_the_three_values() {
-        let forbidden = BTreeSet::from([Effect::Mutation]);
+        let forbidden = EnumSet::from(Effect::Mutation);
         assert_eq!(Effects::none().avoids(&forbidden), Adequacy::Holds);
         assert_eq!(Effects::declared([Effect::Egress]).avoids(&forbidden), Adequacy::Holds);
         assert_eq!(
             Effects::declared([Effect::Mutation, Effect::Egress]).avoids(&forbidden),
-            Adequacy::Fails(BTreeSet::from([Effect::Mutation]))
+            Adequacy::Fails(EnumSet::from(Effect::Mutation))
         );
         assert_eq!(Effects::Unknown.avoids(&forbidden), Adequacy::Unprovable);
     }
